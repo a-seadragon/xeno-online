@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XENO Online</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&family=Noto+Serif+JP:wght@300;400;600;700&family=Cinzel:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --gold:#c9a84c;--gold-l:#f0d080;--gold-d:#8a6820;
+  --deep:#080810;--panel:#141422;--panel2:#1c1c30;
+  --border:#252540;--border2:#2e2e50;
+  --text:#e4ddd0;--dim:#6a6480;
+  --red:#c0392b;--red-l:#e74c3c;
+  --blue:#2471a3;--blue-l:#3498db;
+  --green:#1e8449;--green-l:#27ae60;
+  --purple:#7d3c98;
+  --cw:88px;--ch:126px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--deep);color:var(--text);font-family:'Noto Serif JP',serif;min-height:100vh;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(ellipse at 30% 20%,rgba(201,168,76,.04),transparent 50%),
+             radial-gradient(ellipse at 70% 80%,rgba(100,50,150,.04),transparent 50%)}
+.screen{display:none;min-height:100vh;position:relative;z-index:1}
+.screen.active{display:flex;flex-direction:column;align-items:center;justify-content:center}
+#game-screen.active{justify-content:flex-start}
+/* title */
+#title-screen{padding:40px 20px}
+.logo-wrap{text-align:center;margin-bottom:28px}
+.logo-eye{font-family:'Cinzel',serif;font-size:10px;letter-spacing:10px;color:var(--gold);opacity:.6;margin-bottom:10px}
+.logo-main{font-family:'Cinzel Decorative',cursive;font-size:clamp(54px,11vw,104px);font-weight:900;letter-spacing:.15em;
+  background:linear-gradient(145deg,#8a6820 0%,#c9a84c 30%,#f0d080 55%,#c9a84c 75%,#8a6820 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+  animation:sh 4s ease-in-out infinite;filter:drop-shadow(0 0 24px rgba(201,168,76,.25))}
+@keyframes sh{0%,100%{filter:drop-shadow(0 0 16px rgba(201,168,76,.2))}50%{filter:drop-shadow(0 0 36px rgba(201,168,76,.5))}}
+.logo-sub{font-family:'Cinzel',serif;font-size:12px;letter-spacing:6px;color:var(--gold);opacity:.5;margin-top:8px}
+.ob{display:inline-block;background:rgba(201,168,76,.1);border:1px solid var(--gold-d);
+  color:var(--gold);font-family:'Cinzel',serif;font-size:9px;letter-spacing:4px;padding:4px 14px;border-radius:2px;margin-top:10px}
+.div{width:180px;height:1px;background:linear-gradient(90deg,transparent,var(--gold),transparent);margin:22px auto}
+.cbadge{font-family:'Cinzel',serif;font-size:9px;letter-spacing:2px;padding:3px 10px;border-radius:2px;display:inline-block;margin-bottom:16px}
+.cok{background:rgba(39,174,96,.1);border:1px solid var(--green);color:var(--green-l)}
+.cerr{background:rgba(192,57,43,.1);border:1px solid var(--red);color:var(--red-l)}
+.lcards{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;max-width:560px;width:100%}
+.lc{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:24px 20px;
+  flex:1;min-width:238px;max-width:258px;transition:border-color .2s}
+.lc:hover{border-color:var(--border2)}
+.lct{font-family:'Cinzel',serif;color:var(--gold);font-size:13px;letter-spacing:3px;margin-bottom:13px;text-align:center}
+.inp{width:100%;background:#0a0a14;border:1px solid var(--border);color:var(--text);
+  padding:11px 13px;font-family:'Noto Serif JP',serif;font-size:14px;border-radius:5px;outline:none;
+  transition:border-color .2s;margin-bottom:10px}
+.inp:focus{border-color:var(--gold)}.inp::placeholder{color:var(--dim)}
+.cinp{font-family:'Cinzel',serif;font-size:20px;letter-spacing:8px;text-align:center;text-transform:uppercase}
+.btn{width:100%;border:none;padding:13px;font-family:'Cinzel',serif;font-size:12px;letter-spacing:3px;
+  text-transform:uppercase;cursor:pointer;border-radius:5px;transition:all .2s}
+.btn-g{background:linear-gradient(135deg,#c9a84c,#8a6820);color:#080810;font-weight:700}
+.btn-g:hover:not(:disabled){background:linear-gradient(135deg,#f0d080,#c9a84c);box-shadow:0 0 26px rgba(201,168,76,.3)}
+.btn-o{background:transparent;border:1px solid var(--border2);color:var(--text)}
+.btn-o:hover:not(:disabled){border-color:var(--gold);color:var(--gold)}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn-sm{width:auto;padding:8px 18px;font-size:10px;letter-spacing:2px}
+/* lobby */
+#lobby-screen{padding:24px 16px;gap:16px}
+.cdsp{font-family:'Cinzel Decorative',cursive;font-size:clamp(30px,6vw,50px);color:var(--gold);
+  letter-spacing:.2em;text-shadow:0 0 28px rgba(201,168,76,.3);cursor:pointer;transition:all .2s;user-select:none;text-align:center}
+.cdsp:hover{text-shadow:0 0 48px rgba(201,168,76,.6)}
+.chint{font-size:10px;color:var(--dim);font-family:'Cinzel',serif;letter-spacing:2px;margin-top:4px;text-align:center}
+.slbl{font-family:'Cinzel',serif;font-size:10px;color:var(--dim);letter-spacing:4px;text-transform:uppercase;margin-bottom:10px}
+.plist{display:flex;flex-direction:column;gap:7px;width:100%;max-width:420px}
+.pr{background:var(--panel);border:1px solid var(--border);border-radius:6px;
+  padding:10px 15px;display:flex;align-items:center;gap:9px;transition:all .3s}
+.pr.rdy{border-color:var(--green);background:rgba(39,174,96,.05)}
+.pdot{width:7px;height:7px;border-radius:50%;background:var(--dim);flex-shrink:0;transition:all .3s}
+.pr.rdy .pdot{background:var(--green-l);box-shadow:0 0 7px var(--green)}
+.pnm{font-family:'Cinzel',serif;font-size:12px;letter-spacing:2px;flex:1}
+.pbg{font-size:8px;font-family:'Cinzel',serif;letter-spacing:1px;padding:2px 8px;border-radius:2px}
+.bhost{background:rgba(201,168,76,.15);border:1px solid var(--gold-d);color:var(--gold)}
+.brdy{background:rgba(39,174,96,.15);border:1px solid var(--green);color:var(--green-l)}
+.bwait{background:rgba(106,100,128,.1);border:1px solid var(--border2);color:var(--dim)}
+/* game */
+#game-screen{flex-direction:column;padding:0;min-height:100vh;width:100%;align-items:stretch}
+.gh{background:var(--panel);border-bottom:1px solid var(--border);padding:8px 15px;
+  display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.gtitle{font-family:'Cinzel Decorative',cursive;color:var(--gold);font-size:15px;letter-spacing:3px}
+.ginfo{display:flex;gap:14px}
+.gst{font-family:'Cinzel',serif;font-size:10px;color:var(--dim);letter-spacing:1px}
+.gst span{color:var(--gold);font-size:12px}
+.tbar{background:rgba(201,168,76,.04);border-bottom:1px solid rgba(201,168,76,.08);
+  padding:5px 15px;display:flex;align-items:center;gap:7px;font-family:'Cinzel',serif;
+  font-size:10px;color:var(--dim);letter-spacing:2px;flex-shrink:0}
+.tnm{color:var(--gold);font-size:12px}
+.mytag{background:rgba(201,168,76,.12);border:1px solid var(--gold-d);color:var(--gold-l);
+  font-size:8px;padding:2px 7px;border-radius:2px;letter-spacing:1px}
+/* player zones */
+.pa{flex:1;padding:10px 12px;display:flex;flex-direction:column;gap:8px;overflow-y:auto}
+.pz{background:var(--panel);border:1px solid var(--border);border-radius:7px;padding:10px 12px;transition:all .3s}
+.pz.act{border-color:var(--gold);box-shadow:0 0 16px rgba(201,168,76,.13),inset 0 0 14px rgba(201,168,76,.02)}
+.pz.ded{opacity:.35;border-color:transparent}
+.pz.prt{border-color:var(--blue-l);box-shadow:0 0 11px rgba(52,152,219,.14)}
+.pz.me{background:var(--panel2)}
+.pzhd{display:flex;align-items:center;gap:7px;margin-bottom:8px}
+.pd{width:7px;height:7px;border-radius:50%;background:var(--dim);flex-shrink:0;transition:all .3s}
+.pz.act .pd{background:var(--gold);box-shadow:0 0 6px var(--gold)}
+.pz.ded .pd{background:var(--red)}
+.pz.prt .pd{background:var(--blue-l)}
+.pznm{font-family:'Cinzel',serif;font-size:12px;letter-spacing:2px;flex:1}
+.pbs{display:flex;gap:4px;flex-wrap:wrap}
+.badge{font-size:8px;padding:2px 6px;border-radius:2px;letter-spacing:1px;font-family:'Cinzel',serif;text-transform:uppercase}
+.bt{background:rgba(201,168,76,.2);color:var(--gold);border:1px solid var(--gold-d)}
+.be{background:rgba(192,57,43,.2);color:var(--red-l);border:1px solid var(--red)}
+.bp{background:rgba(41,128,185,.2);color:var(--blue-l);border:1px solid var(--blue)}
+.bs{background:rgba(125,60,152,.2);color:#c39bd3;border:1px solid var(--purple)}
+.bm{background:rgba(201,168,76,.08);color:var(--gold-l);border:1px solid var(--gold-d);opacity:.7}
+.pcs{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.dp{display:flex;gap:3px;flex-wrap:wrap}
+.sep{width:1px;height:50px;background:var(--border);margin:0 4px;flex-shrink:0;align-self:center}
+/* hand cards */
+.hc{width:var(--cw);height:var(--ch);border-radius:6px;border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;transition:all .2s;
+  position:relative;overflow:hidden;flex-shrink:0}
+.hc.back{background:linear-gradient(135deg,#14142a,#1a1a35);
+  background-image:repeating-linear-gradient(45deg,transparent,transparent 4px,rgba(201,168,76,.03) 4px,rgba(201,168,76,.03) 5px)}
+.hc.sp{cursor:pointer;border-color:rgba(201,168,76,.35)}
+.hc.sp:hover{border-color:var(--gold);transform:translateY(-5px);box-shadow:0 10px 20px rgba(0,0,0,.5)}
+.hc.pk{border-color:var(--gold)!important;box-shadow:0 0 20px rgba(201,168,76,.4)!important;transform:translateY(-9px)!important}
+.mc{width:44px;height:64px;border-radius:4px;border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden}
+.ci{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:5px;gap:2px}
+.cr{font-family:'Cinzel Decorative',cursive;font-size:18px;font-weight:700;line-height:1}
+.cn{font-size:9px;font-family:'Noto Serif JP',serif;font-weight:600;text-align:center;line-height:1.2}
+.ce{font-size:7px;font-family:'Noto Serif JP',serif;opacity:.65;text-align:center}
+.mc .cr{font-size:12px}.mc .cn{font-size:7px}
+.ddot{position:absolute;top:4px;right:4px;width:6px;height:6px;border-radius:50%;background:var(--gold);box-shadow:0 0 5px var(--gold)}
+.c10{background:linear-gradient(135deg,#180d2e,#2a1560);border-color:#7050c0!important;color:#c0a0f0}
+.c9{background:linear-gradient(135deg,#1e0808,#450e0e);border-color:#8a1818!important;color:#e87070}
+.c8{background:linear-gradient(135deg,#081c2e,#0e3548);border-color:#186888!important;color:#60c0e0}
+.c7{background:linear-gradient(135deg,#181600,#353000);border-color:#786800!important;color:#d0b000}
+.c6{background:linear-gradient(135deg,#180800,#381600);border-color:#782800!important;color:#e06828}
+.c5{background:linear-gradient(135deg,#0c0c0c,#1e1e1e);border-color:#4a4a4a!important;color:#999}
+.c4{background:linear-gradient(135deg,#081608,#103520);border-color:#186838!important;color:#58c870}
+.c3{background:linear-gradient(135deg,#130820,#281040);border-color:#581888!important;color:#a858d8}
+.c2{background:linear-gradient(135deg,#080e20,#101e3c);border-color:#183878!important;color:#5888c8}
+.c1{background:linear-gradient(135deg,#0e0e0e,#181828);border-color:#383858!important;color:#7888a8}
+/* action panel */
+.apl{background:var(--panel);border-top:1px solid var(--border);padding:12px 15px;flex-shrink:0}
+.aplt{font-family:'Cinzel',serif;color:var(--gold);font-size:10px;letter-spacing:3px;text-transform:uppercase;margin-bottom:8px;opacity:.7}
+.abtns{display:flex;gap:7px;flex-wrap:wrap}
+.ab{background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:9px 15px;
+  font-family:'Noto Serif JP',serif;font-size:12px;cursor:pointer;border-radius:4px;transition:all .2s}
+.ab:hover:not(:disabled){border-color:var(--gold);color:var(--gold);background:rgba(201,168,76,.05)}
+.ab:disabled{opacity:.3;cursor:not-allowed}
+.ab.cf{background:rgba(201,168,76,.1);border-color:var(--gold-d);color:var(--gold)}
+.ab.cf:hover:not(:disabled){background:rgba(201,168,76,.2);box-shadow:0 0 11px rgba(201,168,76,.2)}
+.cdsc{background:rgba(0,0,0,.4);border:1px solid var(--border);border-radius:5px;
+  padding:8px 12px;font-size:11px;color:var(--dim);line-height:1.7;margin-top:8px;display:none}
+.cdsc.vis{display:block}
+.wmsg{background:rgba(52,152,219,.07);border:1px solid rgba(52,152,219,.16);border-radius:4px;
+  padding:8px 13px;font-family:'Cinzel',serif;font-size:10px;color:var(--blue-l);letter-spacing:2px;text-align:center}
+/* log */
+.glog{height:68px;background:#060610;border-top:1px solid var(--border);padding:6px 15px;overflow-y:auto;flex-shrink:0}
+.le{font-size:11px;color:var(--dim);padding:2px 0;border-bottom:1px solid rgba(255,255,255,.02);line-height:1.5}
+.limp{color:var(--gold)}.lact{color:var(--text)}.lelim{color:var(--red-l)}
+/* modal */
+.mov{position:fixed;inset:0;background:rgba(0,0,0,.88);display:none;
+  align-items:center;justify-content:center;z-index:1000;backdrop-filter:blur(4px)}
+.mov.on{display:flex}
+.mbox{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:24px 24px 20px;
+  max-width:430px;width:92%;position:relative}
+.mbox::before{content:'';position:absolute;top:0;left:12px;right:12px;height:1px;
+  background:linear-gradient(90deg,transparent,var(--gold),transparent)}
+.mt{font-family:'Cinzel',serif;color:var(--gold);font-size:14px;letter-spacing:3px;margin-bottom:10px;text-align:center}
+.mtx{font-size:11px;color:var(--dim);margin-bottom:14px;text-align:center;line-height:1.8;white-space:pre-line}
+.mbd{width:100%}
+.mtgts{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;margin-bottom:14px}
+.tg{background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:9px 16px;
+  font-family:'Noto Serif JP',serif;font-size:12px;cursor:pointer;border-radius:4px;min-width:86px;transition:all .2s}
+.tg:hover{border-color:var(--gold);color:var(--gold);background:rgba(201,168,76,.08)}
+.mch{display:flex;gap:9px;justify-content:center;flex-wrap:wrap;margin-bottom:14px}
+.mcc{cursor:pointer;border-radius:6px;border:2px solid transparent!important;
+  width:var(--cw);height:var(--ch);transition:all .2s}
+.mcc:hover,.mcc.on{border-color:var(--gold)!important;transform:translateY(-4px);box-shadow:0 8px 16px rgba(201,168,76,.3)}
+.mrsel{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-bottom:13px}
+.rb{width:37px;height:37px;border-radius:4px;border:1px solid var(--border);background:var(--panel2);
+  cursor:pointer;font-family:'Cinzel',serif;font-size:14px;transition:all .2s;
+  display:flex;align-items:center;justify-content:center;color:var(--text)}
+.rb:hover,.rb.on{border-color:var(--gold);color:var(--gold);background:rgba(201,168,76,.08)}
+.mbtns{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:13px}
+.pbox{text-align:center;margin-bottom:11px}
+.pnote{font-size:10px;color:var(--dim);margin-top:7px;letter-spacing:1px}
+.blnd{width:var(--cw);height:var(--ch);border-radius:6px;border:1px solid var(--border)!important;
+  cursor:pointer;transition:all .2s;background:linear-gradient(135deg,#14142a,#1a1a35)}
+.blnd:hover{border-color:var(--gold)!important;transform:translateY(-4px);box-shadow:0 8px 16px rgba(201,168,76,.3)}
+/* result */
+#result-screen{padding:40px 20px;gap:16px;text-align:center}
+.rtl{font-family:'Cinzel Decorative',cursive;font-size:clamp(26px,5vw,44px);letter-spacing:4px;
+  background:linear-gradient(135deg,#c9a84c,#f0d080);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.rwn{font-family:'Cinzel',serif;color:var(--gold);font-size:19px;letter-spacing:3px}
+.rhands{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin:13px 0}
+.rpc{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 15px;text-align:center;min-width:102px}
+.rpc.w{border-color:var(--gold);box-shadow:0 0 16px rgba(201,168,76,.17)}
+.rpn{font-family:'Cinzel',serif;font-size:10px;color:var(--dim);letter-spacing:2px;margin-bottom:8px}
+/* toast */
+.toast{position:fixed;top:56px;left:50%;transform:translateX(-50%) translateY(-13px);
+  background:var(--panel);border:1px solid var(--gold-d);color:var(--gold);
+  padding:8px 19px;border-radius:4px;font-family:'Cinzel',serif;font-size:10px;letter-spacing:2px;
+  z-index:2000;opacity:0;transition:all .3s;pointer-events:none;white-space:nowrap;max-width:90vw;text-align:center}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.err{border-color:var(--red);color:var(--red-l)}
+::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+</style>
+</head>
+<body>
+<div class="toast" id="toast"></div>
+
+<!-- TITLE -->
+<div class="screen active" id="title-screen">
+  <div class="logo-wrap">
+    <div class="logo-eye">Card Game</div>
+    <div class="logo-main">XENO</div>
+    <div class="logo-sub">ゼノ</div>
+    <div class="ob">Online Multiplayer</div>
+  </div>
+  <div id="conn-status" class="cbadge cerr">接続中...</div>
+  <div class="div"></div>
+  <div class="lcards">
+    <div class="lc">
+      <div class="lct">部屋を作成</div>
+      <input class="inp" id="host-name" placeholder="あなたの名前" maxlength="12">
+      <button class="btn btn-g" id="create-btn">部屋を作成する</button>
+    </div>
+    <div class="lc">
+      <div class="lct">部屋に参加</div>
+      <input class="inp" id="join-name" placeholder="あなたの名前" maxlength="12">
+      <input class="inp cinp" id="join-code" placeholder="ROOM CODE" maxlength="6">
+      <button class="btn btn-o" id="join-btn">参加する</button>
+    </div>
+  </div>
+</div>
+
+<!-- LOBBY -->
+<div class="screen" id="lobby-screen">
+  <div style="text-align:center">
+    <div style="font-family:'Cinzel',serif;font-size:10px;letter-spacing:4px;color:var(--dim);margin-bottom:6px">ROOM CODE</div>
+    <div class="cdsp" id="code-disp">------</div>
+    <div class="chint">クリックでコードをコピー</div>
+  </div>
+  <div class="div" style="width:120px;margin:13px auto"></div>
+  <div class="slbl">参加プレイヤー</div>
+  <div class="plist" id="plist"></div>
+  <div style="margin-top:16px;display:flex;flex-direction:column;gap:9px;width:100%;max-width:270px">
+    <button class="btn btn-o" id="ready-btn">準備完了</button>
+    <button class="btn btn-g" id="start-btn" style="display:none">ゲーム開始</button>
+    <button class="btn btn-o btn-sm" id="leave-btn" style="width:auto;align-self:center;color:var(--dim)">退出する</button>
+  </div>
+</div>
+
+<!-- GAME -->
+<div class="screen" id="game-screen">
+  <div class="gh">
+    <div class="gtitle">XENO</div>
+    <div class="ginfo">
+      <div class="gst">山札 <span id="g-deck">-</span></div>
+      <div class="gst">転生 <span id="g-reb">あり</span></div>
+    </div>
+  </div>
+  <div class="tbar"><span>手番:</span><span class="tnm" id="g-turn">-</span><span id="g-sage"></span></div>
+  <div class="pa" id="g-pa"></div>
+  <div class="glog" id="glog"></div>
+  <div class="apl">
+    <div class="aplt" id="aplt">待機中</div>
+    <div class="abtns" id="abtns"></div>
+    <div class="cdsc" id="cdsc"></div>
+  </div>
+</div>
+
+<!-- RESULT -->
+<div class="screen" id="result-screen">
+  <div class="rtl" id="rtl">GAME OVER</div>
+  <div class="rwn" id="rwn"></div>
+  <div class="rhands" id="rhands"></div>
+  <button class="btn btn-g" style="max-width:230px;margin-top:5px" id="back-btn">タイトルへ戻る</button>
+</div>
+
+<!-- MODAL -->
+<div class="mov" id="mov">
+  <div class="mbox">
+    <div class="mt" id="mt">-</div>
+    <div class="mtx" id="mtx"></div>
+    <div class="mbd" id="mbd"></div>
+  </div>
+</div>
+
+<script type="module" defer>
+import { initializeApp }    from "https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js";
+import { getDatabase, ref, set, get, update, onValue }
+                            from "https://www.gstatic.com/firebasejs/12.11.0/firebase-database.js";
+import { getAuth, signInAnonymously }
+                            from "https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js";
+
+// ── config ──
+const FC = {
+  apiKey:"AIzaSyA6Dk_MvoVYmQ7zcoRu8Stq36zi3APTods",
+  authDomain:"xeno-st.firebaseapp.com",
+  databaseURL:"https://xeno-st-default-rtdb.firebaseio.com",
+  projectId:"xeno-st",
+  storageBucket:"xeno-st.firebasestorage.app",
+  messagingSenderId:"1025681806500",
+  appId:"1:1025681806500:web:8521ed8c04aaae50954231",
+  measurementId:"G-94XZFB62WE"
+};
+
+// ── DB ──
+let db, myUid;
+const dbSet = (p,v) => set(ref(db,p),v);
+const dbGet = p     => get(ref(db,p));
+const dbUpd = (p,v) => update(ref(db,p),v);
+const dbLsn = (p,cb)=> onValue(ref(db,p),cb);
+
+// ── state ──
+let myPid=null, myName='', rc='', isHost=false, localReady=false;
+let unsub=null, lastGS=null, picked=null, logLen=0;
+
+const CD={
+  10:{name:'英雄', eff:'潜伏・転生',cnt:1,desc:'場に出せない。皇帝以外で脱落→転生札で復活。'},
+  9: {name:'皇帝', eff:'公開処刑', cnt:1,desc:'相手に1枚引かせ手札2枚公開、1枚を指定して捨てさせる。英雄→転生不可。'},
+  8: {name:'精霊', eff:'交換',     cnt:2,desc:'相手の手札と自分の手札を交換する。'},
+  7: {name:'賢者', eff:'選択',     cnt:2,desc:'次の手番で山札から3枚引き1枚を選ぶ。残り2枚は山札へ戻す。'},
+  6: {name:'貴族', eff:'対決',     cnt:2,desc:'相手と手札を見せ合い数字の小さい方が脱落。同数は相打ち。'},
+  5: {name:'死神', eff:'疫病',     cnt:2,desc:'相手に1枚引かせシャッフル後に1枚を盲目指定で捨てさせる。'},
+  4: {name:'乙女', eff:'守護',     cnt:2,desc:'次の自分の手番まで自分への効果を無効にする。'},
+  3: {name:'占師', eff:'透視',     cnt:2,desc:'相手の手札を自分だけが確認できる。'},
+  2: {name:'兵士', eff:'捜査',     cnt:2,desc:'相手の手札ランクを言い当てると相手が脱落する。'},
+  1: {name:'少年', eff:'革命',     cnt:2,desc:'1枚目は効果なし。2枚目で「公開処刑」発動（英雄は転生可）。'},
+};
+
+// ── init ──
+async function init(){
+  try{
+    console.log('Firebase init start...');
+    const app=initializeApp(FC);
+    db=getDatabase(app);
+    console.log('DB ready');
+    const auth=getAuth(app);
+    const cred=await signInAnonymously(auth);
+    myUid=cred.user.uid;
+    console.log('Signed in anonymously, uid:', myUid);
+    setCB(true);
+  }catch(e){
+    console.error('Firebase init error:', e);
+    setCB(false, e.message);
+  }
+}
+function setCB(ok,msg){
+  const el=g('conn-status');
+  el.className='cbadge '+(ok?'cok':'cerr');
+  el.textContent=ok?'接続済み':'接続エラー (クリックで再試行)';
+  el.style.cursor=ok?'default':'pointer';
+  if(!ok){
+    el.onclick=()=>{ el.textContent='再接続中...'; init(); };
+    if(msg) toast('接続エラー: ' + msg.slice(0,70), true);
+  } else {
+    el.onclick=null;
+  }
+}
+
+// ── room ──
+function genCode(){
+  return Array.from({length:6},()=>'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random()*32)]).join('');
+}
+async function createRoom(){
+  try {
+    if(!myUid){toast('Firebase接続中...再試行してください',true);return;}
+    const name=g('host-name').value.trim()||'ホスト';
+    myName=name; isHost=true; myPid=0; rc=genCode();
+    toast('部屋を作成中...');
+    await dbSet(`rooms/${rc}`,{code:rc,hostUid:myUid,status:'lobby',
+      players:[{uid:myUid,name,ready:false,pid:0}],gameState:null,createdAt:Date.now()});
+    enterLobby();
+  } catch(e) {
+    console.error('createRoom error:', e);
+    toast('エラー: ' + e.message.slice(0,60), true);
+  }
+}
+async function joinRoom(){
+  try {
+    if(!myUid){toast('Firebase接続中...再試行してください',true);return;}
+    const name=g('join-name').value.trim()||'ゲスト';
+    const code=g('join-code').value.trim().toUpperCase();
+    if(code.length<4){toast('ルームコードを入力してください',true);return;}
+    toast('参加中...');
+    const snap=await dbGet(`rooms/${code}`);
+    if(!snap.exists()){toast('部屋が見つかりません',true);return;}
+    const room=snap.val();
+    if(room.status!=='lobby'){toast('ゲームはすでに始まっています',true);return;}
+    const players=room.players||[];
+    if(players.length>=4){toast('部屋が満員です',true);return;}
+    myName=name; isHost=false; rc=code; myPid=players.length;
+    players.push({uid:myUid,name,ready:false,pid:myPid});
+    await dbUpd(`rooms/${code}`,{players});
+    enterLobby();
+  } catch(e) {
+    console.error('joinRoom error:', e);
+    toast('エラー: ' + e.message.slice(0,60), true);
+  }
+}
+function enterLobby(){
+  g('code-disp').textContent=rc;
+  sw('lobby-screen');
+  if(unsub)unsub();
+  unsub=dbLsn(`rooms/${rc}`,snap=>{
+    if(!snap.exists()){backToTitle();return;}
+    const room=snap.val();
+    if((room.status==='playing'||room.status==='ended')&&room.gameState){
+      if(!g('game-screen').classList.contains('active')) sw('game-screen');
+      handleGS(room.gameState);
+    } else {
+      renderLobby(room);
+    }
+  });
+}
+function renderLobby(room){
+  const players=room.players||[];
+  g('plist').innerHTML=players.map((p,i)=>{
+    const me=p.uid===myUid,host=i===0,rdy=!!p.ready;
+    return `<div class="pr ${rdy?'rdy':''}">
+      <div class="pdot"></div>
+      <div class="pnm">${p.name}${me?' (あなた)':''}</div>
+      ${host?'<span class="pbg bhost">HOST</span>':''}
+      <span class="pbg ${rdy?'brdy':'bwait'}">${rdy?'準備完了':'待機中'}</span>
+    </div>`;
+  }).join('');
+  const rb=g('ready-btn'),sb=g('start-btn');
+  if(isHost){
+    rb.style.display='none'; sb.style.display='';
+    const nh=players.slice(1);
+    sb.disabled=!(nh.length>0&&nh.every(p=>p.ready)&&players.length>=2);
+  } else {
+    rb.style.display=''; sb.style.display='none';
+    rb.textContent=localReady?'準備中止':'準備完了';
+    rb.className=`btn ${localReady?'btn-g':'btn-o'}`;
+  }
+}
+async function toggleReady(){
+  localReady=!localReady;
+  await dbUpd(`rooms/${rc}/players/${myPid}`,{ready:localReady});
+}
+async function startGame(){
+  const snap=await dbGet(`rooms/${rc}`);
+  const gs=initGS(snap.val().players);
+  await dbUpd(`rooms/${rc}`,{status:'playing',gameState:gs});
+}
+
+// ── game state ──
+function bldDeck(){
+  let d=[];
+  for(let r in CD){const rk=+r;for(let i=0;i<CD[rk].cnt;i++)d.push({rank:rk,id:d.length});}
+  return shuf(d);
+}
+function shuf(a){
+  a=[...a];
+  for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
+  return a;
+}
+function initGS(rp){
+  const deck=bldDeck();
+  const players=rp.map((p,i)=>({id:i,uid:p.uid,name:p.name,hand:[],discards:[],eliminated:false,protected:false,sageMode:false}));
+  for(const p of players)p.hand.push(deck.shift());
+  const rb=deck.shift();
+  return{players,deck,rebirthCard:rb,rebirthUsed:false,currentTurn:0,phase:'draw',drawnId:null,boyPlayed:false,log:[],gameOver:false,winners:[]};
+}
+
+// ── listener ──
+function handleGS(gs){
+  lastGS=gs;
+  const cp=gs.players[gs.currentTurn];
+  if(gs.phase==='draw'&&!gs.gameOver&&cp&&cp.uid===myUid&&!cp.eliminated){
+    drawPhase(cl(gs)); return;
+  }
+  renderGame(gs);
+}
+
+// ── turn engine ──
+async function drawPhase(gs){
+  const p=gs.players[gs.currentTurn];
+  if(p.eliminated){await adv(gs);return;}
+  if(p.sageMode){
+    p.sageMode=false;
+    const av=Math.min(3,gs.deck.length);
+    if(!av){await endGame(gs,'deck');return;}
+    const drawn=gs.deck.splice(0,av);
+    lg(gs,`${p.name} は賢者の効果で${av}枚引きます。`,'act');
+    gs.phase='choose'; await push(gs); renderGame(gs);
+    sagePick(gs,drawn); return;
+  }
+  if(!gs.deck.length){await endGame(gs,'deck');return;}
+  const c=gs.deck.shift(); gs.drawnId=c.id; p.hand.push(c);
+  gs.phase='choose';
+  lg(gs,`${p.name} が山札からカードを引きました。`,'act');
+  await push(gs); renderGame(gs);
+}
+async function push(gs){await dbUpd(`rooms/${rc}`,{gameState:gs});}
+async function adv(gs){
+  let nx=(gs.currentTurn+1)%gs.players.length,t=0;
+  while(gs.players[nx].eliminated&&t<gs.players.length){nx=(nx+1)%gs.players.length;t++;}
+  if(t>=gs.players.length){await endGame(gs,'all');return;}
+  gs.players[nx].protected=false;
+  gs.currentTurn=nx; gs.phase='draw'; gs.drawnId=null;
+  await push(gs);
+}
+async function playCard(idx){
+  const gs=cl(lastGS);
+  const p=gs.players[gs.currentTurn],c=p.hand[idx];
+  if(c.rank===10){toast('英雄は場に出せません',true);return;}
+  p.hand.splice(idx,1); p.discards.push(c);
+  gs.drawnId=null; picked=null;
+  g('cdsc').classList.remove('vis');
+  lg(gs,`${p.name} が「${c.rank} ${CD[c.rank].name}」を出しました。`,'act');
+  await fx(gs,c,p);
+}
+
+// ── effects ──
+async function fx(gs,c,actor){
+  const r=c.rank;
+  if(r===9){await fxEmp(gs,actor,false);return;}
+  if(r===8){await fxSpi(gs,actor);return;}
+  if(r===7){fxSage(gs,actor);await push(gs);renderGame(gs);return;}
+  if(r===6){await fxNob(gs,actor);return;}
+  if(r===5){await fxRea(gs,actor);return;}
+  if(r===4){fxMai(gs,actor);await et(gs);return;}
+  if(r===3){await fxSeer(gs,actor);return;}
+  if(r===2){await fxSol(gs,actor);return;}
+  if(r===1){await fxBoy(gs,actor);return;}
+  await et(gs);
+}
+async function fxEmp(gs,actor,fromBoy){
+  const targets=alv(gs).filter(p=>p.id!==actor.id&&!p.protected);
+  if(!targets.length){lg(gs,'対象なし','act');await et(gs);return;}
+  gs.phase='effect-pending'; await push(gs); renderGame(gs);
+  pickTgt('皇帝 - 公開処刑','相手を指名してください',targets,async tgt=>{
+    if(!gs.deck.length){lg(gs,'山札なし','act');await et(gs);return;}
+    tgt.hand.push(gs.deck.shift());
+    lg(gs,`${tgt.name} が山札から引きました（公開処刑）。`,'act');
+    await push(gs); renderGame(gs);
+    pickCC(`皇帝 - ${tgt.name} の手札`,'捨てさせるカードを選んでください。',tgt.hand,async ci=>{
+      const d=tgt.hand.splice(ci,1)[0]; tgt.discards.push(d);
+      lg(gs,`${actor.name} が ${tgt.name} の「${d.rank} ${CD[d.rank].name}」を捨てさせました。`,'act');
+      if(d.rank===10){lg(gs,'英雄が皇帝に処刑！転生不可。','elim');eli(gs,tgt,false);}
+      else if(!tgt.hand.length)eli(gs,tgt,false);
+      if(!chkW(gs))await et(gs);
+    });
+  });
+}
+async function fxSpi(gs,actor){
+  const targets=alv(gs).filter(p=>p.id!==actor.id&&!p.protected);
+  if(!targets.length){lg(gs,'対象なし','act');await et(gs);return;}
+  gs.phase='effect-pending'; await push(gs); renderGame(gs);
+  pickTgt('精霊 - 交換','交換する相手を指名してください',targets,async tgt=>{
+    [actor.hand[0],tgt.hand[0]]=[tgt.hand[0],actor.hand[0]];
+    lg(gs,`${actor.name} と ${tgt.name} の手札が交換されました。`,'act');
+    await et(gs);
+  });
+}
+function fxSage(gs,actor){
+  actor.sageMode=true;
+  lg(gs,`${actor.name} は賢者の効果を得ました。次手番で3枚引きます。`,'act');
+}
+async function fxNob(gs,actor){
+  const targets=alv(gs).filter(p=>p.id!==actor.id&&!p.protected);
+  if(!targets.length){lg(gs,'対象なし','act');await et(gs);return;}
+  gs.phase='effect-pending'; await push(gs); renderGame(gs);
+  pickTgt('貴族 - 対決','対決する相手を指名してください',targets,async tgt=>{
+    const aR=actor.hand[0]?.rank??0,tR=tgt.hand[0]?.rank??0;
+    lg(gs,`対決: ${actor.name}(${aR}) vs ${tgt.name}(${tR})`,'act');
+    if(aR<tR){lg(gs,`${actor.name} 脱落！`,'elim');eli(gs,actor,true);}
+    else if(tR<aR){lg(gs,`${tgt.name} 脱落！`,'elim');eli(gs,tgt,true);}
+    else{lg(gs,'相打ち！','elim');eli(gs,actor,true);eli(gs,tgt,true);}
+    if(!chkW(gs))await et(gs);
+  });
+}
+async function fxRea(gs,actor){
+  const targets=alv(gs).filter(p=>p.id!==actor.id&&!p.protected);
+  if(!targets.length){lg(gs,'対象なし','act');await et(gs);return;}
+  gs.phase='effect-pending'; await push(gs); renderGame(gs);
+  pickTgt('死神 - 疫病','指名する相手を選んでください',targets,async tgt=>{
+    if(!gs.deck.length){lg(gs,'山札なし','act');await et(gs);return;}
+    tgt.hand.push(gs.deck.shift()); tgt.hand=shuf(tgt.hand);
+    lg(gs,`${tgt.name} が引きました（死神効果）。手札シャッフル済み。`,'act');
+    await push(gs); renderGame(gs);
+    showMod('死神 - 疫病',`${tgt.name} の手札（2枚）どちらを捨てさせますか？\n（どちらが何かは不明）`,
+      `<div class="mch"><div class="blnd" id="_rb0"><div class="ci"><div class="cr" style="color:var(--dim)">?</div><div class="cn" style="color:var(--dim)">左</div></div></div>
+       <div class="blnd" id="_rb1"><div class="ci"><div class="cr" style="color:var(--dim)">?</div><div class="cn" style="color:var(--dim)">右</div></div></div></div>`);
+    const doR=async idx=>{
+      cmod();
+      const d=tgt.hand.splice(idx,1)[0]; tgt.discards.push(d);
+      lg(gs,`${actor.name} が ${tgt.name} の「${d.rank} ${CD[d.rank].name}」を捨てさせました（死神）。`,'act');
+      if(d.rank===10){lg(gs,'英雄が死神で脱落→転生！','elim');eliR(gs,tgt);}
+      else if(!tgt.hand.length)eli(gs,tgt,true);
+      if(!chkW(gs))await et(gs);
+    };
+    g('_rb0').addEventListener('click',()=>doR(0));
+    g('_rb1').addEventListener('click',()=>doR(1));
+  });
+}
+function fxMai(gs,actor){actor.protected=true;lg(gs,`${actor.name} は守護状態になりました。`,'act');}
+async function fxSeer(gs,actor){
+  const targets=alv(gs).filter(p=>p.id!==actor.id&&!p.protected);
+  if(!targets.length){lg(gs,'対象なし','act');await et(gs);return;}
+  gs.phase='effect-pending'; await push(gs); renderGame(gs);
+  pickTgt('占師 - 透視','手札を覗く相手を指名してください',targets,async tgt=>{
+    lg(gs,`${actor.name} が ${tgt.name} の手札を確認しました。`,'act');
+    showMod('占師 - 透視結果',`${tgt.name} の手札を確認しました。`,
+      `<div class="pbox">${cHTML(tgt.hand[0],true)}</div>
+       <div class="pnote">この情報は他のプレイヤーに秘密にしてください</div>
+       <div class="mbtns"><button class="btn btn-o btn-sm" id="_sok">確認</button></div>`);
+    await push(gs);
+    g('_sok').addEventListener('click',async()=>{cmod();await et(gs);});
+  });
+}
+async function fxSol(gs,actor){
+  const targets=alv(gs).filter(p=>p.id!==actor.id&&!p.protected);
+  if(!targets.length){lg(gs,'対象なし','act');await et(gs);return;}
+  gs.phase='effect-pending'; await push(gs); renderGame(gs);
+  pickTgt('兵士 - 捜査','言い当てる相手を指名してください',targets,async tgt=>{
+    await push(gs); renderGame(gs);
+    showMod('兵士 - 捜査',`${tgt.name} の手札ランクを選んでください`,
+      `<div class="mrsel">${[1,2,3,4,5,6,7,8,9].map(r=>`<div class="rb" id="_r${r}">${r}</div>`).join('')}</div>
+       <div class="mbtns"><button class="btn btn-o btn-sm" id="_solok" disabled>宣言する</button></div>`);
+    let guess=null;
+    [1,2,3,4,5,6,7,8,9].forEach(r=>{
+      g(`_r${r}`).addEventListener('click',()=>{
+        document.querySelectorAll('.rb').forEach(b=>b.classList.remove('on'));
+        g(`_r${r}`).classList.add('on'); guess=r; g('_solok').disabled=false;
+      });
+    });
+    g('_solok').addEventListener('click',async()=>{
+      if(guess===null)return; cmod();
+      const actual=tgt.hand[0]?.rank;
+      lg(gs,`${actor.name} が ${tgt.name} の手札を「${guess}」と宣言。`,'act');
+      if(guess===actual){
+        lg(gs,`正解！${tgt.name} の手札は ${actual}${CD[actual].name}。脱落！`,'elim');
+        if(actual===10)eliR(gs,tgt);else eli(gs,tgt,true);
+      }else{lg(gs,'不正解。','act');}
+      if(!chkW(gs))await et(gs);
+    });
+  });
+}
+async function fxBoy(gs,actor){
+  if(!gs.boyPlayed){
+    gs.boyPlayed=true;
+    lg(gs,'少年1枚目。効果なし（2枚目で公開処刑）。','act');
+    await et(gs);
+  }else{
+    lg(gs,'少年2枚目！公開処刑発動！','imp');
+    await fxBoyEmp(gs,actor);
+  }
+}
+async function fxBoyEmp(gs,actor){
+  const targets=alv(gs).filter(p=>p.id!==actor.id&&!p.protected);
+  if(!targets.length){lg(gs,'対象なし','act');await et(gs);return;}
+  gs.phase='effect-pending'; await push(gs); renderGame(gs);
+  pickTgt('少年(革命) - 公開処刑','相手を指名してください',targets,async tgt=>{
+    if(!gs.deck.length){lg(gs,'山札なし','act');await et(gs);return;}
+    tgt.hand.push(gs.deck.shift()); await push(gs); renderGame(gs);
+    pickCC(`少年 - ${tgt.name} の手札`,'捨てさせるカードを選んでください（英雄なら転生可）。',tgt.hand,async ci=>{
+      const d=tgt.hand.splice(ci,1)[0]; tgt.discards.push(d);
+      lg(gs,`${actor.name} が ${tgt.name} の「${d.rank} ${CD[d.rank].name}」を捨てさせました（少年）。`,'act');
+      if(d.rank===10){lg(gs,'英雄が少年で脱落→転生！','elim');eliR(gs,tgt);}
+      else if(!tgt.hand.length)eli(gs,tgt,false);
+      if(!chkW(gs))await et(gs);
+    });
+  });
+}
+function sagePick(gs,drawn){
+  let sel=null;
+  showMod('賢者 - 選択',`${gs.players[gs.currentTurn].name} が引いた${drawn.length}枚から1枚選んでください`,
+    `<div class="mch">${drawn.map((c,i)=>`<div class="mcc c${c.rank}" id="_sp${i}">${cIn(c)}</div>`).join('')}</div>
+     <div class="mbtns"><button class="btn btn-o btn-sm" id="_spok" disabled>選択</button></div>`);
+  drawn.forEach((_,i)=>{
+    g(`_sp${i}`).addEventListener('click',()=>{
+      document.querySelectorAll('.mcc').forEach(e=>e.classList.remove('on'));
+      g(`_sp${i}`).classList.add('on'); sel=i; g('_spok').disabled=false;
+    });
+  });
+  g('_spok').addEventListener('click',async()=>{
+    if(sel===null)return;
+    const chosen=drawn[sel],rest=drawn.filter((_,i)=>i!==sel);
+    const actor=gs.players[gs.currentTurn];
+    actor.hand.push(chosen); gs.deck.push(...rest); gs.deck=shuf(gs.deck);
+    gs.drawnId=chosen.id; gs.phase='choose';
+    lg(gs,`${actor.name} が「${chosen.rank} ${CD[chosen.rank].name}」を選びました。`,'act');
+    cmod(); await push(gs); renderGame(gs);
+  });
+}
+
+// ── helpers ──
+function alv(gs){return gs.players.filter(p=>!p.eliminated);}
+function cl(gs){return JSON.parse(JSON.stringify(gs));}
+function eli(gs,p){
+  if(p.eliminated)return; p.eliminated=true;
+  const cs=p.hand.map(c=>`${c.rank}${CD[c.rank].name}`).join(',');
+  if(cs)lg(gs,`${p.name} 脱落。手札: ${cs}`,'elim');
+  p.discards.push(...p.hand); p.hand=[];
+}
+function eliR(gs,p){
+  if(!gs.rebirthUsed&&gs.rebirthCard){
+    lg(gs,`${p.name} の英雄が転生！`,'imp');
+    p.discards.push(...p.hand); p.hand=[];
+    p.hand.push(gs.rebirthCard); gs.rebirthCard=null; gs.rebirthUsed=true;
+    lg(gs,`${p.name} が転生札「${p.hand[0].rank} ${CD[p.hand[0].rank].name}」で復帰！`,'imp');
+  }else{lg(gs,`転生札なし。${p.name} 脱落。`,'elim');eli(gs,p);}
+}
+function chkW(gs){
+  const a=alv(gs);
+  if(a.length<=1){endGame(gs,a.length===1?'survivor':'all');return true;}
+  return false;
+}
+async function et(gs){
+  if(!gs.deck.length){await endGame(gs,'deck');return;}
+  await adv(gs);
+}
+async function endGame(gs,reason){
+  gs.gameOver=true;
+  const a=alv(gs);
+  if(reason==='survivor')gs.winners=a.map(p=>p.id);
+  else if(reason==='deck'){
+    const mx=Math.max(...a.map(p=>p.hand[0]?.rank??0));
+    gs.winners=a.filter(p=>(p.hand[0]?.rank??0)===mx).map(p=>p.id);
+  }else gs.winners=[];
+  const wn=gs.winners.map(id=>gs.players[id].name);
+  lg(gs,wn.length===1?`${wn[0]} の勝利！`:wn.length>1?`${wn.join('と')} が引き分け`:'引き分け','imp');
+  await dbUpd(`rooms/${rc}`,{gameState:gs,status:'ended'});
+}
+function lg(gs,msg,type='act'){
+  if(!gs.log)gs.log=[];
+  gs.log.push({msg,type});
+  if(gs.log.length>80)gs.log=gs.log.slice(-80);
+}
+
+// ── render ──
+function renderGame(gs){
+  if(!gs)return; lastGS=gs;
+  g('g-deck').textContent=gs.deck.length;
+  g('g-reb').textContent=gs.rebirthUsed?'なし':'あり';
+  const cp=gs.players[gs.currentTurn];
+  const myTurn=cp&&cp.uid===myUid&&!cp.eliminated;
+  g('g-turn').textContent=cp?.name??'-';
+  g('g-sage').innerHTML=cp?.sageMode
+    ?`<span class="mytag" style="background:rgba(125,60,152,.2);border-color:var(--purple);color:#c39bd3">賢者モード</span>`:'';
+
+  const pa=g('g-pa'); pa.innerHTML='';
+  for(const p of gs.players){
+    const me=p.uid===myUid,ac=p.id===gs.currentTurn;
+    const div=document.createElement('div');
+    div.className=`pz${ac?' act':''}${p.eliminated?' ded':''}${p.protected?' prt':''}${me?' me':''}`;
+    let bd='';
+    if(ac&&!p.eliminated)bd+=`<span class="badge bt">手番</span>`;
+    if(p.eliminated)bd+=`<span class="badge be">脱落</span>`;
+    if(p.protected)bd+=`<span class="badge bp">守護</span>`;
+    if(p.sageMode)bd+=`<span class="badge bs">賢者</span>`;
+    if(me)bd+=`<span class="badge bm">あなた</span>`;
+    let hh='';
+    if(me&&!p.eliminated){
+      const cp2=ac&&gs.phase==='choose';
+      hh=p.hand.map((c,i)=>{
+        const dr=gs.drawnId!==null&&c.id===gs.drawnId;
+        const sel=picked===i,nop=c.rank===10;
+        return `<div class="hc c${c.rank}${cp2&&!nop?' sp':''}${sel?' pk':''}" data-idx="${i}" data-ok="${cp2&&!nop?1:0}" title="${CD[c.rank].desc}">
+          ${dr?'<div class="ddot"></div>':''}${cIn(c)}</div>`;
+      }).join('');
+    }else if(!p.eliminated){
+      hh=p.hand.map(()=>`<div class="hc back"><div class="ci"><div class="cr" style="color:var(--dim);font-size:13px">?</div></div></div>`).join('');
+    }
+    const dh=p.discards.map(c=>`<div class="mc c${c.rank}">${cIn(c,true)}</div>`).join('');
+    div.innerHTML=`<div class="pzhd"><div class="pd"></div><div class="pznm">${p.name}</div><div class="pbs">${bd}</div></div>
+      <div class="pcs">${hh}${p.discards.length?`<div class="sep"></div><div class="dp">${dh}</div>`:''}</div>`;
+    pa.appendChild(div);
+  }
+  // card click delegation
+  pa.querySelectorAll('.hc[data-ok="1"]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      const idx=+el.dataset.idx; picked=idx;
+      const c=lastGS.players[lastGS.currentTurn].hand[idx];
+      g('cdsc').className='cdsc vis';
+      g('cdsc').textContent=`${c.rank} ${CD[c.rank].name}（${CD[c.rank].eff}）: ${CD[c.rank].desc}`;
+      renderGame(lastGS);
+    });
+  });
+  // action panel
+  const at=g('aplt'),ab=g('abtns'); ab.innerHTML='';
+  if(gs.gameOver){at.textContent='ゲーム終了';showResult(gs);return;}
+  if(!myTurn){
+    at.textContent='他のプレイヤーの手番';
+    ab.innerHTML=`<div class="wmsg">⏳ ${cp?.name} が操作中...</div>`;
+    return;
+  }
+  if(gs.phase==='choose'){
+    if(picked!==null){
+      const c=gs.players[gs.currentTurn].hand[picked];
+      at.textContent='このカードを出しますか？';
+      const ok=document.createElement('button'); ok.className='ab cf';
+      ok.textContent=`「${c.rank} ${CD[c.rank].name}」を出す`;
+      ok.addEventListener('click',()=>{const i=picked;picked=null;playCard(i);});
+      const ng=document.createElement('button'); ng.className='ab';
+      ng.textContent='キャンセル';
+      ng.addEventListener('click',()=>{picked=null;g('cdsc').classList.remove('vis');renderGame(lastGS);});
+      ab.append(ok,ng);
+    }else{
+      at.textContent='カードを選んでください';
+      ab.innerHTML=`<span style="font-size:11px;color:var(--dim)">上のカードをクリックして選択</span>`;
+    }
+  }else if(gs.phase==='effect-pending'){
+    at.textContent='効果を解決中...';
+  }
+  // log
+  if(gs.log&&gs.log.length>logLen){
+    const el=g('glog');
+    for(let i=logLen;i<gs.log.length;i++){
+      const e=gs.log[i],d=document.createElement('div');
+      d.className=`le l${e.type}`; d.textContent=e.msg; el.appendChild(d);
+    }
+    el.scrollTop=el.scrollHeight; logLen=gs.log.length;
+  }
+}
+function showResult(gs){
+  setTimeout(()=>{
+    sw('result-screen');
+    const wi=gs.winners||[],wn=wi.map(id=>gs.players[id].name);
+    g('rtl').textContent=wn.length===1?'勝利':'引き分け';
+    g('rwn').textContent=wn.length===1?`🏆 ${wn[0]} の勝利！`:wn.length?`${wn.join(' と ')} が引き分け`:'全員脱落';
+    g('rhands').innerHTML=gs.players.map(p=>{
+      const w=wi.includes(p.id),c=p.hand[0];
+      return `<div class="rpc ${w?'w':''}"><div class="rpn">${p.name}${p.eliminated?' (脱落)':''}</div>
+        ${c?cHTML(c,true):'<div style="color:var(--dim);font-size:11px">手札なし</div>'}</div>`;
+    }).join('');
+  },700);
+}
+
+// ── card html ──
+function cIn(c,mini=false){
+  return `<div class="ci"><div class="cr">${c.rank}</div><div class="cn">${CD[c.rank].name}</div>${mini?'':`<div class="ce">${CD[c.rank].eff}</div>`}</div>`;
+}
+function cHTML(c,large=false){
+  const s=large?'width:var(--cw);height:var(--ch)':'width:44px;height:64px';
+  return `<div class="hc c${c.rank}" style="${s};border-radius:6px;border:1px solid">${cIn(c)}</div>`;
+}
+
+// ── modals ──
+function showMod(title,text,body){
+  g('mt').textContent=title; g('mtx').textContent=text; g('mbd').innerHTML=body;
+  g('mov').classList.add('on');
+}
+function cmod(){g('mov').classList.remove('on');}
+function pickTgt(title,text,targets,cb){
+  showMod(title,text,`<div class="mtgts">${targets.map(t=>`<div class="tg" data-id="${t.id}">${t.name}</div>`).join('')}</div>`);
+  g('mbd').querySelectorAll('.tg').forEach(el=>{
+    el.addEventListener('click',()=>{const tgt=lastGS.players[+el.dataset.id];cmod();cb(tgt);});
+  });
+}
+function pickCC(title,text,cards,cb){
+  let sel=null;
+  showMod(title,text,
+    `<div class="mch">${cards.map((c,i)=>`<div class="mcc c${c.rank}" data-ci="${i}">${cIn(c)}</div>`).join('')}</div>
+     <div class="mbtns"><button class="btn btn-o btn-sm" id="_ccok" disabled>捨てさせる</button></div>`);
+  g('mbd').querySelectorAll('.mcc').forEach(el=>{
+    el.addEventListener('click',()=>{
+      g('mbd').querySelectorAll('.mcc').forEach(e=>e.classList.remove('on'));
+      el.classList.add('on'); sel=+el.dataset.ci; g('_ccok').disabled=false;
+    });
+  });
+  g('_ccok').addEventListener('click',()=>{if(sel===null)return;cmod();cb(sel);});
+}
+
+// ── utils ──
+function g(id){return document.getElementById(id);}
+function sw(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));g(id).classList.add('active');}
+function toast(msg,err=false){
+  const t=g('toast'); t.textContent=msg; t.className=`toast on${err?' err':''}`;
+  clearTimeout(window._tt); window._tt=setTimeout(()=>t.classList.remove('on'),2800);
+}
+function backToTitle(){
+  if(unsub){unsub();unsub=null;}
+  logLen=0; picked=null; localReady=false; sw('title-screen');
+}
+
+// ── events ──
+document.addEventListener('DOMContentLoaded', () => {
+  g('create-btn').addEventListener('click', createRoom);
+  g('join-btn')  .addEventListener('click', joinRoom);
+  g('ready-btn') .addEventListener('click', toggleReady);
+  g('start-btn') .addEventListener('click', startGame);
+  g('leave-btn') .addEventListener('click', backToTitle);
+  g('back-btn')  .addEventListener('click', backToTitle);
+  g('code-disp') .addEventListener('click', ()=>{
+    navigator.clipboard.writeText(rc).then(()=>toast('コードをコピーしました！')).catch(()=>toast(rc));
+  });
+  g('join-code').addEventListener('keydown',e=>{if(e.key==='Enter')joinRoom();});
+});
+
+init();
+</script>
+</body>
+</html>
