@@ -974,12 +974,12 @@ async function fx兵士(gs, actor) {
   await pushGS(gs); renderGame(gs);
   pickTarget('兵士 - 捜査', '言い当てる相手を指名してください', targets, async tgt => {
     showModal('兵士 - 捜査', `${tgt.name} の手札ランクを選んでください`,
-      `<div class="mrsel">${[1,2,3,4,5,6,7,8,9].map(r =>
+      `<div class="mrsel">${[1,2,3,4,5,6,7,8,9,10].map(r =>
         `<div class="rb" id="_r${r}">${r}</div>`).join('')}</div>
        <div class="mbtns"><button class="btn btn-o btn-sm" id="_solok" disabled>宣言する</button></div>`
     );
     let guess = null;
-    for (const r of [1,2,3,4,5,6,7,8,9]) {
+    for (const r of [1,2,3,4,5,6,7,8,9,10]) {
       q(`_r${r}`).addEventListener('click', () => {
         document.querySelectorAll('.rb').forEach(b => b.classList.remove('on'));
         q(`_r${r}`).classList.add('on');
