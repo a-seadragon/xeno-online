@@ -334,16 +334,55 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 
 <!-- GAME -->
 <div class="screen" id="game-screen">
+  <!-- Header -->
   <div class="gh">
     <div class="gtitle">XENO</div>
     <div class="ginfo">
-      <div class="gst">山札 <span id="g-deck">-</span></div>
-      <div class="gst">転生 <span id="g-reb">あり</span></div>
+      <div class="gspill">
+        <div class="gspill-num" id="g-deck">-</div>
+        <div class="gspill-lbl">山札</div>
+      </div>
+      <div class="gspill">
+        <div class="gspill-num" id="g-reb" style="font-size:11px">あり</div>
+        <div class="gspill-lbl">転生</div>
+      </div>
     </div>
   </div>
-  <div class="tbar"><span>手番:</span><span class="tnm" id="g-turn">-</span><span id="g-sage"></span></div>
-  <div class="pa" id="g-pa"></div>
-  <div class="glog" id="glog"></div>
+  <!-- Turn bar -->
+  <div class="tbar">
+    <span class="tbar-lbl">手番</span>
+    <span class="tnm" id="g-turn">-</span>
+    <span id="g-sage"></span>
+  </div>
+  <!-- Opponents (scrollable) -->
+  <div class="opponents-area" id="g-opponents"></div>
+  <!-- Center: deck visual + log -->
+  <div class="center-bar">
+    <div class="deck-col">
+      <div class="deck-vis">
+        <div class="deck-card"></div>
+        <div class="deck-card"></div>
+        <div class="deck-card"></div>
+      </div>
+      <div class="deck-num" id="g-deck2">-</div>
+      <div class="deck-lbl">DECK</div>
+    </div>
+    <div class="rebirth-col">
+      <div class="rebirth-icon">⚜️</div>
+      <div class="rebirth-status reb-on" id="g-reb2">あり</div>
+      <div class="rebirth-lbl">転生</div>
+    </div>
+    <div class="log-col" id="glog"></div>
+  </div>
+  <!-- My area (fixed bottom) -->
+  <div class="my-area">
+    <div class="my-header">
+      <div class="my-name" id="my-name-lbl">あなた</div>
+      <div class="my-badges" id="my-badges"></div>
+    </div>
+    <div class="my-hand" id="my-hand"></div>
+  </div>
+  <!-- Action panel -->
   <div class="apl">
     <div class="aplt" id="aplt">待機中</div>
     <div class="abtns" id="abtns"></div>
@@ -435,7 +474,6 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   </div>
 </div>
 <script type="module">
-import { initializeApp }  from "https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js";
 import { initializeApp }  from "https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js";
 import { getDatabase, ref, set, get, onValue, remove }
                           from "https://www.gstatic.com/firebasejs/12.11.0/firebase-database.js";
