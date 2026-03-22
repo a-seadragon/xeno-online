@@ -291,15 +291,17 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   </div>
 </div>
 
-<script type="module" defer>
+<script type="module">
 import { initializeApp }  from "https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js";
-import { getDatabase, ref, set, get, update, onValue }
+import { getDatabase, ref, set, get, onValue, remove }
                           from "https://www.gstatic.com/firebasejs/12.11.0/firebase-database.js";
 import { getAuth, signInAnonymously }
                           from "https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js";
 
-// ══ CONFIG ══
-const FC={
+/* ═══════════════════════════════════════
+   Firebase設定
+═══════════════════════════════════════ */
+const FC = {
   apiKey:"AIzaSyA6Dk_MvoVYmQ7zcoRu8Stq36zi3APTods",
   authDomain:"xeno-st.firebaseapp.com",
   databaseURL:"https://xeno-st-default-rtdb.firebaseio.com",
@@ -310,735 +312,875 @@ const FC={
   measurementId:"G-94XZFB62WE"
 };
 
-// ══ DB ══
-let db, myUid;
-const dbSet=(p,v)=>set(ref(db,p),v);
-const dbGet=p=>get(ref(db,p));
-const dbUpd=(p,v)=>update(ref(db,p),v);
-const dbLsn=(p,cb)=>onValue(ref(db,p),cb);
+/* ═══════════════════════════════════════
+   DB ラッパー
+   ゲーム状態は JSON.stringify して1フィールドに保存
+   → Firebaseの配列→オブジェクト変換問題を完全回避
+═══════════════════════════════════════ */
+let db, auth, myUid;
 
-// ══ CLIENT STATE ══
-let myPid=null, myName='', rc='', isHost=false, localReady=false;
-let unsub=null, lastGS=null, picked=null, logLen=0;
-// 二重実行防止フラグ
-let processing=false;
-// 最後に処理したゲーム状態のハッシュ（同一状態の再処理を防ぐ）
-let lastProcessedPhase='';
+// ゲーム状態をJSONシリアライズして保存
+const saveGS = (roomCode, gs) =>
+  set(ref(db, `rooms/${roomCode}/gsJson`), JSON.stringify(gs));
 
-// ══ CARD DATA ══
-const CD={
-  10:{name:'英雄', eff:'潜伏・転生',cnt:1,desc:'場に出せない。皇帝以外で脱落→転生札で復活。'},
-  9:{name:'皇帝', eff:'公開処刑',cnt:1,desc:'相手に1枚引かせ手札2枚公開、1枚を指定して捨てさせる。英雄→転生不可。'},
-  8:{name:'精霊', eff:'交換',cnt:2,desc:'相手の手札と自分の手札を交換する。'},
-  7:{name:'賢者', eff:'選択',cnt:2,desc:'次の手番で山札から3枚引き1枚を選ぶ。残り2枚は山札へ戻す。'},
-  6:{name:'貴族', eff:'対決',cnt:2,desc:'相手と手札を見せ合い数字の小さい方が脱落。同数は相打ち。'},
-  5:{name:'死神', eff:'疫病',cnt:2,desc:'相手に1枚引かせシャッフル後に1枚を盲目指定で捨てさせる。'},
-  4:{name:'乙女', eff:'守護',cnt:2,desc:'次の自分の手番まで自分への効果を無効にする。'},
-  3:{name:'占師', eff:'透視',cnt:2,desc:'相手の手札を自分だけが確認できる。'},
-  2:{name:'兵士', eff:'捜査',cnt:2,desc:'相手の手札ランクを言い当てると相手が脱落する。'},
-  1:{name:'少年', eff:'革命',cnt:2,desc:'1枚目は効果なし。2枚目で「公開処刑」発動（英雄は転生可）。'},
+// ルーム全体をオブジェクトで保存（ロビー情報）
+const saveRoom = (roomCode, data) =>
+  set(ref(db, `rooms/${roomCode}`), data);
+
+const getRoom = (roomCode) =>
+  get(ref(db, `rooms/${roomCode}`));
+
+const setField = (path, val) =>
+  set(ref(db, path), val);
+
+const listenRoom = (roomCode, cb) =>
+  onValue(ref(db, `rooms/${roomCode}`), cb);
+
+/* ═══════════════════════════════════════
+   クライアント状態
+═══════════════════════════════════════ */
+let myPid = null, myName = '', roomCode = '', isHost = false, localReady = false;
+let unsubRoom = null, lastGS = null, pickedIdx = null, logLen = 0;
+let processing = false, lastSeq = -1;
+
+/* ═══════════════════════════════════════
+   カードデータ
+═══════════════════════════════════════ */
+const CD = {
+  10:{name:'英雄', eff:'潜伏・転生', cnt:1, desc:'場に出せない。皇帝以外で脱落→転生札で復活。'},
+  9: {name:'皇帝', eff:'公開処刑',   cnt:1, desc:'相手に1枚引かせ手札2枚公開、1枚を指定して捨てさせる。英雄→転生不可。'},
+  8: {name:'精霊', eff:'交換',       cnt:2, desc:'相手の手札と自分の手札を交換する。'},
+  7: {name:'賢者', eff:'選択',       cnt:2, desc:'次の手番で山札から3枚引き1枚を選ぶ。残り2枚は山札へ戻す。'},
+  6: {name:'貴族', eff:'対決',       cnt:2, desc:'相手と手札を見せ合い数字の小さい方が脱落。同数は相打ち。'},
+  5: {name:'死神', eff:'疫病',       cnt:2, desc:'相手に1枚引かせシャッフル後に盲目で1枚捨てさせる。'},
+  4: {name:'乙女', eff:'守護',       cnt:2, desc:'次の自分の手番まで自分への効果を無効にする。'},
+  3: {name:'占師', eff:'透視',       cnt:2, desc:'相手の手札を自分だけが確認できる。'},
+  2: {name:'兵士', eff:'捜査',       cnt:2, desc:'相手の手札ランクを言い当てると相手が脱落する。'},
+  1: {name:'少年', eff:'革命',       cnt:2, desc:'1枚目は効果なし。2枚目で「公開処刑」発動（英雄は転生可）。'},
 };
 
-// ══ INIT ══
-async function init(){
-  try{
-    const app=initializeApp(FC);
-    db=getDatabase(app);
-    const auth=getAuth(app);
-    const cred=await signInAnonymously(auth);
-    myUid=cred.user.uid;
-    console.log('Firebase ready, uid:', myUid);
-    setCB(true);
-  }catch(e){
-    console.error('Firebase init error:',e);
-    setCB(false,e.message);
+/* ═══════════════════════════════════════
+   Firebase 初期化
+═══════════════════════════════════════ */
+async function init() {
+  try {
+    const app = initializeApp(FC);
+    db   = getDatabase(app);
+    auth = getAuth(app);
+    const cred = await signInAnonymously(auth);
+    myUid = cred.user.uid;
+    console.log('Firebase OK uid:', myUid);
+    setConnBadge(true);
+  } catch(e) {
+    console.error('Firebase init error:', e);
+    setConnBadge(false, e.message);
   }
 }
-function setCB(ok,msg){
-  const el=g('conn-status');
-  el.className='cbadge '+(ok?'cok':'cerr');
-  el.textContent=ok?'接続済み':'接続エラー (クリックで再試行)';
-  el.style.cursor=ok?'default':'pointer';
-  if(!ok){ el.onclick=()=>init(); if(msg) toast('接続エラー: '+msg.slice(0,60),true); }
-  else el.onclick=null;
+
+function setConnBadge(ok, msg) {
+  const el = q('conn-status');
+  el.className = 'cbadge ' + (ok ? 'cok' : 'cerr');
+  el.textContent = ok ? '接続済み' : '接続エラー（クリックで再試行）';
+  el.style.cursor = ok ? 'default' : 'pointer';
+  el.onclick = ok ? null : () => init();
+  if (!ok && msg) toast('接続エラー: ' + msg.slice(0, 60), true);
 }
 
-// ══ ROOM ══
-function genCode(){
-  return Array.from({length:6},()=>'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random()*32)]).join('');
+/* ═══════════════════════════════════════
+   ルーム管理
+═══════════════════════════════════════ */
+function genCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({length:6}, () => chars[Math.floor(Math.random()*chars.length)]).join('');
 }
-async function createRoom(){
-  try{
-    if(!myUid){toast('Firebase接続中...再試行してください',true);return;}
-    const name=g('host-name').value.trim()||'ホスト';
-    myName=name; isHost=true; myPid=0; rc=genCode();
+
+async function createRoom() {
+  try {
+    if (!myUid) { toast('Firebase接続中。少し待ってから再試行してください', true); return; }
+    const name = q('host-name').value.trim() || 'ホスト';
+    myName = name; isHost = true; myPid = 0;
+    roomCode = genCode();
     toast('部屋を作成中...');
-    await dbSet(`rooms/${rc}`,{
-      code:rc, hostUid:myUid, status:'lobby',
-      players:[{uid:myUid,name,ready:false,pid:0}],
-      gameState:null, createdAt:Date.now()
-    });
+    const roomData = {
+      code: roomCode,
+      hostUid: myUid,
+      status: 'lobby',
+      players: [{ uid: myUid, name, ready: false, pid: 0 }],
+      gsJson: null,
+      createdAt: Date.now()
+    };
+    await saveRoom(roomCode, roomData);
     enterLobby();
-  }catch(e){ console.error(e); toast('エラー: '+e.message.slice(0,60),true); }
+  } catch(e) {
+    console.error('createRoom:', e);
+    toast('エラー: ' + e.message.slice(0, 60), true);
+  }
 }
-async function joinRoom(){
-  try{
-    if(!myUid){toast('Firebase接続中...再試行してください',true);return;}
-    const name=g('join-name').value.trim()||'ゲスト';
-    const code=g('join-code').value.trim().toUpperCase();
-    if(code.length<4){toast('ルームコードを入力してください',true);return;}
+
+async function joinRoom() {
+  try {
+    if (!myUid) { toast('Firebase接続中。少し待ってから再試行してください', true); return; }
+    const name = q('join-name').value.trim() || 'ゲスト';
+    const code = q('join-code').value.trim().toUpperCase();
+    if (code.length < 4) { toast('ルームコードを入力してください', true); return; }
     toast('参加中...');
-    const snap=await dbGet(`rooms/${code}`);
-    if(!snap.exists()){toast('部屋が見つかりません',true);return;}
-    const room=snap.val();
-    if(room.status!=='lobby'){toast('ゲームはすでに始まっています',true);return;}
-    const players=room.players||[];
-    if(players.length>=4){toast('部屋が満員です',true);return;}
-    myName=name; isHost=false; rc=code; myPid=players.length;
-    players.push({uid:myUid,name,ready:false,pid:myPid});
-    await dbUpd(`rooms/${code}`,{players});
+    const snap = await getRoom(code);
+    if (!snap.exists()) { toast('部屋が見つかりません', true); return; }
+    const room = snap.val();
+    if (room.status !== 'lobby') { toast('ゲームはすでに始まっています', true); return; }
+    const players = room.players ? Object.values(room.players) : [];
+    if (players.length >= 4) { toast('部屋が満員です', true); return; }
+    myName = name; isHost = false; roomCode = code;
+    myPid = players.length;
+    players.push({ uid: myUid, name, ready: false, pid: myPid });
+    await setField(`rooms/${code}/players`, players);
     enterLobby();
-  }catch(e){ console.error(e); toast('エラー: '+e.message.slice(0,60),true); }
+  } catch(e) {
+    console.error('joinRoom:', e);
+    toast('エラー: ' + e.message.slice(0, 60), true);
+  }
 }
-function enterLobby(){
-  g('code-disp').textContent=rc;
-  sw('lobby-screen');
-  if(unsub)unsub();
-  // Firebase リスナー：ルーム変更を監視
-  unsub=dbLsn(`rooms/${rc}`,snap=>{
-    if(!snap.exists()){backToTitle();return;}
-    const room=snap.val();
-    if((room.status==='playing'||room.status==='ended')&&room.gameState){
-      if(!g('game-screen').classList.contains('active')){
-        logLen=0; // 画面切替時にログカウントリセット
-        sw('game-screen');
+
+function enterLobby() {
+  q('code-disp').textContent = roomCode;
+  showScreen('lobby-screen');
+  if (unsubRoom) unsubRoom();
+  unsubRoom = listenRoom(roomCode, snap => {
+    if (!snap.exists()) { backToTitle(); return; }
+    const room = snap.val();
+    if ((room.status === 'playing' || room.status === 'ended') && room.gsJson) {
+      if (!q('game-screen').classList.contains('active')) {
+        logLen = 0;
+        showScreen('game-screen');
       }
-      onRoomUpdate(room.gameState);
-    }else{
+      // gsJson は文字列 → JSON.parse で完全な配列構造を復元
+      const gs = JSON.parse(room.gsJson);
+      onGsReceived(gs);
+    } else {
       renderLobby(room);
     }
   });
 }
-function renderLobby(room){
-  const players=room.players||[];
-  g('plist').innerHTML=players.map((p,i)=>{
-    const me=p.uid===myUid,host=i===0,rdy=!!p.ready;
-    return `<div class="pr ${rdy?'rdy':''}">
+
+function renderLobby(room) {
+  const players = room.players
+    ? (Array.isArray(room.players) ? room.players : Object.values(room.players))
+    : [];
+  q('plist').innerHTML = players.map((p, i) => {
+    const me = p.uid === myUid, host = i === 0, rdy = !!p.ready;
+    return `<div class="pr ${rdy ? 'rdy' : ''}">
       <div class="pdot"></div>
-      <div class="pnm">${p.name}${me?' (あなた)':''}</div>
-      ${host?'<span class="pbg bhost">HOST</span>':''}
-      <span class="pbg ${rdy?'brdy':'bwait'}">${rdy?'準備完了':'待機中'}</span>
+      <div class="pnm">${p.name}${me ? ' (あなた)' : ''}</div>
+      ${host ? '<span class="pbg bhost">HOST</span>' : ''}
+      <span class="pbg ${rdy ? 'brdy' : 'bwait'}">${rdy ? '準備完了' : '待機中'}</span>
     </div>`;
   }).join('');
-  const rb=g('ready-btn'),sb=g('start-btn');
-  if(isHost){
-    rb.style.display='none'; sb.style.display='';
-    const nh=players.slice(1);
-    sb.disabled=!(nh.length>0&&nh.every(p=>p.ready)&&players.length>=2);
-  }else{
-    rb.style.display=''; sb.style.display='none';
-    rb.textContent=localReady?'準備中止':'準備完了';
-    rb.className=`btn ${localReady?'btn-g':'btn-o'}`;
+
+  const rb = q('ready-btn'), sb = q('start-btn');
+  if (isHost) {
+    rb.style.display = 'none';
+    sb.style.display = '';
+    const nonHost = players.slice(1);
+    sb.disabled = !(nonHost.length > 0 && nonHost.every(p => p.ready) && players.length >= 2);
+  } else {
+    rb.style.display = '';
+    sb.style.display = 'none';
+    rb.textContent = localReady ? '準備中止' : '準備完了';
+    rb.className = `btn ${localReady ? 'btn-g' : 'btn-o'}`;
   }
 }
-async function toggleReady(){
-  localReady=!localReady;
-  await dbUpd(`rooms/${rc}/players/${myPid}`,{ready:localReady});
-}
-async function startGame(){
-  const snap=await dbGet(`rooms/${rc}`);
-  const gs=initGS(snap.val().players);
-  // status を playing にしてゲーム状態を書き込む
-  await dbSet(`rooms/${rc}/status`,'playing');
-  await dbSet(`rooms/${rc}/gameState`,gs);
+
+async function toggleReady() {
+  localReady = !localReady;
+  await setField(`rooms/${roomCode}/players/${myPid}/ready`, localReady);
 }
 
-// ══ GAME STATE INIT ══
-function bldDeck(){
-  let d=[];
-  for(let r in CD){const rk=+r;for(let i=0;i<CD[rk].cnt;i++)d.push({rank:rk,id:d.length});}
-  return shuf(d);
+async function startGame() {
+  try {
+    const snap = await getRoom(roomCode);
+    const room = snap.val();
+    const players = Array.isArray(room.players)
+      ? room.players
+      : Object.values(room.players);
+    const gs = buildInitialGS(players);
+    // statusとgsJsonを同時に書き込み
+    await setField(`rooms/${roomCode}/status`, 'playing');
+    await saveGS(roomCode, gs);
+  } catch(e) {
+    console.error('startGame:', e);
+    toast('エラー: ' + e.message.slice(0, 60), true);
+  }
 }
-function shuf(a){
-  a=[...a];
-  for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
+
+/* ═══════════════════════════════════════
+   ゲーム状態構築
+═══════════════════════════════════════ */
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
   return a;
 }
-function initGS(rp){
-  const deck=bldDeck();
-  const players=rp.map((p,i)=>({
-    id:i, uid:p.uid, name:p.name,
-    hand:[], discards:[], eliminated:false, protected:false, sageMode:false
+
+function buildDeck() {
+  const deck = [];
+  for (const r in CD) {
+    const rank = +r;
+    for (let i = 0; i < CD[rank].cnt; i++) deck.push({ rank, id: deck.length });
+  }
+  return shuffle(deck);
+}
+
+function buildInitialGS(roomPlayers) {
+  const deck = buildDeck();
+  const players = roomPlayers.map((rp, i) => ({
+    id: i, uid: rp.uid, name: rp.name,
+    hand: [], discards: [],
+    eliminated: false, protected: false, sageMode: false
   }));
-  for(const p of players) p.hand.push(deck.shift());
-  const rebirthCard=deck.shift();
-  return{
-    players, deck, rebirthCard, rebirthUsed:false,
-    currentTurn:0,
-    phase:'draw',   // draw → (自分のターン時にクライアントが処理) → choose → effect-pending → end → draw
-    drawnId:null, boyPlayed:false,
-    log:[], gameOver:false, winners:[],
-    seq:0  // 状態シーケンス番号（二重処理防止に使用）
+  for (const p of players) p.hand.push(deck.shift());
+  const rebirthCard = deck.shift();
+  return {
+    players, deck, rebirthCard,
+    rebirthUsed: false,
+    currentTurn: 0,
+    phase: 'draw',
+    drawnId: null,
+    boyPlayed: false,
+    log: [],
+    gameOver: false,
+    winners: [],
+    seq: 0
   };
 }
 
-// ══ Firebase配列正規化 ══
-// Firebase は JS配列を {0:{...},1:{...}} のオブジェクトで保存するため
-// 取得時に必ず配列へ戻す
-function toArr(v){
-  if(!v) return [];
-  if(Array.isArray(v)) return v;
-  return Object.values(v);
-}
-function normalizeCard(c){
-  if(!c) return c;
-  return {rank:+(c.rank), id:+(c.id)};
-}
-function normalizeGS(gs){
-  if(!gs) return gs;
-  // players
-  gs.players = toArr(gs.players).map(p=>({
-    ...p,
-    id: +(p.id),
-    hand:     toArr(p.hand).map(normalizeCard),
-    discards: toArr(p.discards).map(normalizeCard),
-    eliminated: !!p.eliminated,
-    protected:  !!p.protected,
-    sageMode:   !!p.sageMode,
-  }));
-  // deck
-  gs.deck = toArr(gs.deck).map(normalizeCard);
-  // log
-  gs.log = toArr(gs.log);
-  // winners
-  gs.winners = toArr(gs.winners).map(Number);
-  // rebirthCard
-  if(gs.rebirthCard) gs.rebirthCard = normalizeCard(gs.rebirthCard);
-  // scalars
-  gs.currentTurn = +(gs.currentTurn||0);
-  gs.seq         = +(gs.seq||0);
-  gs.boyPlayed   = !!gs.boyPlayed;
-  gs.gameOver    = !!gs.gameOver;
-  gs.rebirthUsed = !!gs.rebirthUsed;
-  return gs;
-}
+/* ═══════════════════════════════════════
+   リアルタイム受信ハンドラ
+   JSON.parse済みの gs を受け取る（型は完全に保持）
+═══════════════════════════════════════ */
+function onGsReceived(gs) {
+  lastGS = gs;
 
-// ══ REALTIME HANDLER（Firebaseリスナーから呼ばれる）══
-function onRoomUpdate(rawGs){
-  const gs = normalizeGS(rawGs);
-  lastGS=gs;
-
-  // ゲーム終了
-  if(gs.gameOver){ renderGame(gs); showResult(gs); return; }
-
-  const cp=gs.players[gs.currentTurn];
-  const isMyTurn = cp && cp.uid===myUid && !cp.eliminated;
-
-  // phase=draw かつ自分のターン → ドロー処理を実行
-  // processing フラグ + stateKey で二重実行を防ぐ
-  const stateKey = `${gs.seq}-${gs.phase}-${gs.currentTurn}`;
-  if(gs.phase==='draw' && isMyTurn && !processing && stateKey!==lastProcessedPhase){
-    lastProcessedPhase=stateKey;
-    processing=true;
-    drawPhase(cl(gs)).finally(()=>{ processing=false; });
-    return;
-  }
-
-  renderGame(gs);
-}
-
-// ══ PUSH（Firebaseへ書き込み）══
-async function push(gs){
-  gs.seq=(gs.seq||0)+1; // シーケンス番号を増やす
-  await dbSet(`rooms/${rc}/gameState`,gs);
-}
-
-// ══ DRAW PHASE（手番プレイヤーのクライアントが実行）══
-async function drawPhase(gs){
-  const p=gs.players[gs.currentTurn];
-
-  if(p.sageMode){
-    p.sageMode=false;
-    const av=Math.min(3,gs.deck.length);
-    if(!av){await endGame(gs,'deck');return;}
-    const drawn=gs.deck.splice(0,av);
-    lg(gs,`${p.name} は賢者の効果で${av}枚引きます。`,'act');
-    gs.phase='choose';
-    await push(gs);
+  if (gs.gameOver) {
     renderGame(gs);
-    sagePick(gs,drawn);
+    showResult(gs);
     return;
   }
 
-  if(!gs.deck.length){await endGame(gs,'deck');return;}
+  const cp = gs.players[gs.currentTurn];
+  const isMyTurn = cp && cp.uid === myUid && !cp.eliminated;
 
-  const c=gs.deck.shift();
-  gs.drawnId=c.id;
-  p.hand.push(c);
-  gs.phase='choose';
-  lg(gs,`${p.name} が山札からカードを引きました。`,'act');
-  await push(gs);
+  // 自分のターンかつdrawフェーズ → カードを引く処理を実行
+  // seqで同一状態の二重実行を防ぐ
+  if (gs.phase === 'draw' && isMyTurn && !processing && gs.seq !== lastSeq) {
+    lastSeq = gs.seq;
+    processing = true;
+    execDraw(deepCopy(gs))
+      .catch(e => console.error('execDraw error:', e))
+      .finally(() => { processing = false; });
+    return;
+  }
+
   renderGame(gs);
 }
 
-// ══ ADVANCE TURN ══
-async function advTurn(gs){
-  // 守護を外す（現在プレイヤーの分は次ターン開始時に外す）
-  let nx=(gs.currentTurn+1)%gs.players.length, t=0;
-  while(gs.players[nx].eliminated && t<gs.players.length){
-    nx=(nx+1)%gs.players.length; t++;
+/* ═══════════════════════════════════════
+   Firebase書き込み（JSON文字列として保存）
+═══════════════════════════════════════ */
+async function pushGS(gs) {
+  gs.seq = (gs.seq || 0) + 1;
+  await saveGS(roomCode, gs);
+}
+
+/* ═══════════════════════════════════════
+   ターンエンジン
+═══════════════════════════════════════ */
+async function execDraw(gs) {
+  const p = gs.players[gs.currentTurn];
+
+  // 賢者モード
+  if (p.sageMode) {
+    p.sageMode = false;
+    const avail = Math.min(3, gs.deck.length);
+    if (avail === 0) { await endGame(gs, 'deck'); return; }
+    const drawn = gs.deck.splice(0, avail);
+    addLog(gs, `${p.name} は賢者の効果で${avail}枚引きます。`, 'act');
+    gs.phase = 'choose';
+    await pushGS(gs);
+    renderGame(gs);
+    showSagePick(gs, drawn);
+    return;
   }
-  if(t>=gs.players.length){await endGame(gs,'all');return;}
-  gs.players[nx].protected=false;
-  gs.currentTurn=nx;
-  gs.phase='draw';
-  gs.drawnId=null;
-  await push(gs);
-  // 相手のターンになったので自分はrenderだけ
-  // 相手のクライアントがonRoomUpdateを受けてdrawPhaseを実行する
+
+  // 通常ドロー
+  if (gs.deck.length === 0) { await endGame(gs, 'deck'); return; }
+  const card = gs.deck.shift();
+  gs.drawnId = card.id;
+  p.hand.push(card);
+  gs.phase = 'choose';
+  addLog(gs, `${p.name} が山札からカードを引きました。`, 'act');
+  await pushGS(gs);
+  renderGame(gs);
 }
 
-// ══ END TURN ══
-async function endTurn(gs){
-  if(!gs.deck.length){await endGame(gs,'deck');return;}
-  await advTurn(gs);
+async function advanceTurn(gs) {
+  let next = (gs.currentTurn + 1) % gs.players.length;
+  let tries = 0;
+  while (gs.players[next].eliminated && tries < gs.players.length) {
+    next = (next + 1) % gs.players.length;
+    tries++;
+  }
+  if (tries >= gs.players.length) { await endGame(gs, 'all'); return; }
+  gs.players[next].protected = false;
+  gs.currentTurn = next;
+  gs.phase = 'draw';
+  gs.drawnId = null;
+  await pushGS(gs);
 }
 
-// ══ PLAY CARD ══
-async function playCard(idx){
-  if(processing){return;}
-  const gs=cl(lastGS);
-  const p=gs.players[gs.currentTurn];
-  const c=p.hand[idx];
-  if(c.rank===10){toast('英雄は場に出せません',true);return;}
-  p.hand.splice(idx,1);
-  p.discards.push(c);
-  gs.drawnId=null;
-  picked=null;
-  g('cdsc').classList.remove('vis');
-  lg(gs,`${p.name} が「${c.rank} ${CD[c.rank].name}」を出しました。`,'act');
-  await fx(gs,c,p);
+async function endTurn(gs) {
+  if (gs.deck.length === 0) { await endGame(gs, 'deck'); return; }
+  await advanceTurn(gs);
 }
 
-// ══ EFFECTS ══
-async function fx(gs,c,actor){
-  const r=c.rank;
-  if(r===9){await fxEmp(gs,actor);return;}
-  if(r===8){await fxSpi(gs,actor);return;}
-  if(r===7){fxSage(gs,actor);await endTurn(gs);return;}
-  if(r===6){await fxNob(gs,actor);return;}
-  if(r===5){await fxRea(gs,actor);return;}
-  if(r===4){fxMai(gs,actor);await endTurn(gs);return;}
-  if(r===3){await fxSeer(gs,actor);return;}
-  if(r===2){await fxSol(gs,actor);return;}
-  if(r===1){await fxBoy(gs,actor);return;}
-  await endTurn(gs);
+async function playCard(handIndex) {
+  if (processing) return;
+  const gs = deepCopy(lastGS);
+  const actor = gs.players[gs.currentTurn];
+  const card = actor.hand[handIndex];
+  if (card.rank === 10) { toast('英雄は場に出せません', true); return; }
+  actor.hand.splice(handIndex, 1);
+  actor.discards.push(card);
+  gs.drawnId = null;
+  pickedIdx = null;
+  q('cdsc').classList.remove('vis');
+  addLog(gs, `${actor.name} が「${card.rank} ${CD[card.rank].name}」を出しました。`, 'act');
+  await resolveEffect(gs, card, actor);
 }
 
-// 皇帝
-async function fxEmp(gs,actor){
-  const targets=alv(gs).filter(p=>p.id!==actor.id&&!p.protected);
-  if(!targets.length){lg(gs,'対象なし','act');await endTurn(gs);return;}
-  gs.phase='effect-pending'; await push(gs); renderGame(gs);
-  pickTgt('皇帝 - 公開処刑','相手を指名してください',targets,async tgt=>{
-    if(!gs.deck.length){lg(gs,'山札なし','act');await endTurn(gs);return;}
+/* ═══════════════════════════════════════
+   カード効果
+═══════════════════════════════════════ */
+async function resolveEffect(gs, card, actor) {
+  switch (card.rank) {
+    case 9: await fx皇帝(gs, actor); break;
+    case 8: await fx精霊(gs, actor); break;
+    case 7: fx賢者(gs, actor); await endTurn(gs); break;
+    case 6: await fx貴族(gs, actor); break;
+    case 5: await fx死神(gs, actor); break;
+    case 4: fx乙女(gs, actor); await endTurn(gs); break;
+    case 3: await fx占師(gs, actor); break;
+    case 2: await fx兵士(gs, actor); break;
+    case 1: await fx少年(gs, actor); break;
+    default: await endTurn(gs);
+  }
+}
+
+async function fx皇帝(gs, actor, fromBoy = false) {
+  const targets = alivePlayers(gs).filter(p => p.id !== actor.id && !p.protected);
+  if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
+  gs.phase = 'effect-pending';
+  await pushGS(gs); renderGame(gs);
+  pickTarget('皇帝 - 公開処刑', '相手を指名してください', targets, async tgt => {
+    if (!gs.deck.length) { addLog(gs, '山札なし', 'act'); await endTurn(gs); return; }
     tgt.hand.push(gs.deck.shift());
-    lg(gs,`${tgt.name} が山札から引きました（公開処刑）。`,'act');
-    pickCC(`皇帝 - ${tgt.name} の手札`,'捨てさせるカードを選んでください。',tgt.hand,async ci=>{
-      const d=tgt.hand.splice(ci,1)[0]; tgt.discards.push(d);
-      lg(gs,`${actor.name} が ${tgt.name} の「${d.rank} ${CD[d.rank].name}」を捨てさせました。`,'act');
-      if(d.rank===10){lg(gs,'英雄が皇帝に処刑！転生不可。','elim');eli(gs,tgt,false);}
-      else if(!tgt.hand.length) eli(gs,tgt,false);
-      if(!chkW(gs)) await endTurn(gs);
+    addLog(gs, `${tgt.name} が山札から引きました（公開処刑）。`, 'act');
+    pickCard(`皇帝 - ${tgt.name} の手札`, '捨てさせるカードを選んでください。', tgt.hand, async ci => {
+      const disc = tgt.hand.splice(ci, 1)[0];
+      tgt.discards.push(disc);
+      addLog(gs, `${actor.name} が ${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」を捨てさせました。`, 'act');
+      if (disc.rank === 10) {
+        addLog(gs, '英雄が皇帝に処刑！転生不可。', 'elim');
+        eliminate(gs, tgt, false);
+      } else if (!tgt.hand.length) eliminate(gs, tgt, false);
+      if (!checkWin(gs)) await endTurn(gs);
     });
   });
 }
 
-// 精霊
-async function fxSpi(gs,actor){
-  const targets=alv(gs).filter(p=>p.id!==actor.id&&!p.protected);
-  if(!targets.length){lg(gs,'対象なし','act');await endTurn(gs);return;}
-  gs.phase='effect-pending'; await push(gs); renderGame(gs);
-  pickTgt('精霊 - 交換','交換する相手を指名してください',targets,async tgt=>{
-    [actor.hand[0],tgt.hand[0]]=[tgt.hand[0],actor.hand[0]];
-    lg(gs,`${actor.name} と ${tgt.name} の手札が交換されました。`,'act');
+async function fx精霊(gs, actor) {
+  const targets = alivePlayers(gs).filter(p => p.id !== actor.id && !p.protected);
+  if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
+  gs.phase = 'effect-pending';
+  await pushGS(gs); renderGame(gs);
+  pickTarget('精霊 - 交換', '交換する相手を指名してください', targets, async tgt => {
+    [actor.hand[0], tgt.hand[0]] = [tgt.hand[0], actor.hand[0]];
+    addLog(gs, `${actor.name} と ${tgt.name} の手札が交換されました。`, 'act');
     await endTurn(gs);
   });
 }
 
-// 賢者
-function fxSage(gs,actor){
-  actor.sageMode=true;
-  lg(gs,`${actor.name} は賢者の効果を得ました。次手番で3枚引きます。`,'act');
+function fx賢者(gs, actor) {
+  actor.sageMode = true;
+  addLog(gs, `${actor.name} は賢者の効果を得ました。次手番で3枚引きます。`, 'act');
 }
 
-// 貴族
-async function fxNob(gs,actor){
-  const targets=alv(gs).filter(p=>p.id!==actor.id&&!p.protected);
-  if(!targets.length){lg(gs,'対象なし','act');await endTurn(gs);return;}
-  gs.phase='effect-pending'; await push(gs); renderGame(gs);
-  pickTgt('貴族 - 対決','対決する相手を指名してください',targets,async tgt=>{
-    const aR=actor.hand[0]?.rank??0, tR=tgt.hand[0]?.rank??0;
-    lg(gs,`対決: ${actor.name}(${aR}) vs ${tgt.name}(${tR})`,'act');
-    if(aR<tR){lg(gs,`${actor.name} 脱落！`,'elim');eli(gs,actor,true);}
-    else if(tR<aR){lg(gs,`${tgt.name} 脱落！`,'elim');eli(gs,tgt,true);}
-    else{lg(gs,'相打ち！','elim');eli(gs,actor,true);eli(gs,tgt,true);}
-    if(!chkW(gs)) await endTurn(gs);
+async function fx貴族(gs, actor) {
+  const targets = alivePlayers(gs).filter(p => p.id !== actor.id && !p.protected);
+  if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
+  gs.phase = 'effect-pending';
+  await pushGS(gs); renderGame(gs);
+  pickTarget('貴族 - 対決', '対決する相手を指名してください', targets, async tgt => {
+    const aR = actor.hand[0]?.rank ?? 0, tR = tgt.hand[0]?.rank ?? 0;
+    addLog(gs, `対決: ${actor.name}(${aR}) vs ${tgt.name}(${tR})`, 'act');
+    if (aR < tR)      { addLog(gs, `${actor.name} 脱落！`, 'elim'); eliminate(gs, actor, true); }
+    else if (tR < aR) { addLog(gs, `${tgt.name} 脱落！`, 'elim');   eliminate(gs, tgt, true); }
+    else              { addLog(gs, '相打ち！', 'elim'); eliminate(gs, actor, true); eliminate(gs, tgt, true); }
+    if (!checkWin(gs)) await endTurn(gs);
   });
 }
 
-// 死神
-async function fxRea(gs,actor){
-  const targets=alv(gs).filter(p=>p.id!==actor.id&&!p.protected);
-  if(!targets.length){lg(gs,'対象なし','act');await endTurn(gs);return;}
-  gs.phase='effect-pending'; await push(gs); renderGame(gs);
-  pickTgt('死神 - 疫病','指名する相手を選んでください',targets,async tgt=>{
-    if(!gs.deck.length){lg(gs,'山札なし','act');await endTurn(gs);return;}
-    tgt.hand.push(gs.deck.shift()); tgt.hand=shuf(tgt.hand);
-    lg(gs,`${tgt.name} が引きました（死神効果）。手札シャッフル済み。`,'act');
-    showMod('死神 - 疫病',`${tgt.name} の手札（2枚）どちらを捨てさせますか？\n（どちらが何かは不明）`,
+async function fx死神(gs, actor) {
+  const targets = alivePlayers(gs).filter(p => p.id !== actor.id && !p.protected);
+  if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
+  gs.phase = 'effect-pending';
+  await pushGS(gs); renderGame(gs);
+  pickTarget('死神 - 疫病', '指名する相手を選んでください', targets, async tgt => {
+    if (!gs.deck.length) { addLog(gs, '山札なし', 'act'); await endTurn(gs); return; }
+    tgt.hand.push(gs.deck.shift());
+    tgt.hand = shuffle(tgt.hand);
+    addLog(gs, `${tgt.name} が引きました（死神効果）。手札シャッフル済み。`, 'act');
+    showModal('死神 - 疫病',
+      `${tgt.name} の手札（2枚）どちらを捨てさせますか？\n（どちらが何かは不明）`,
       `<div class="mch">
         <div class="blnd" id="_rb0"><div class="ci"><div class="cr" style="color:var(--dim)">?</div><div class="cn" style="color:var(--dim)">左</div></div></div>
         <div class="blnd" id="_rb1"><div class="ci"><div class="cr" style="color:var(--dim)">?</div><div class="cn" style="color:var(--dim)">右</div></div></div>
-      </div>`);
-    const doR=async idx=>{
-      cmod();
-      const d=tgt.hand.splice(idx,1)[0]; tgt.discards.push(d);
-      lg(gs,`${actor.name} が ${tgt.name} の「${d.rank} ${CD[d.rank].name}」を捨てさせました（死神）。`,'act');
-      if(d.rank===10){lg(gs,'英雄が死神で脱落→転生！','elim');eliR(gs,tgt);}
-      else if(!tgt.hand.length) eli(gs,tgt,true);
-      if(!chkW(gs)) await endTurn(gs);
+      </div>`
+    );
+    const pick = async idx => {
+      closeModal();
+      const disc = tgt.hand.splice(idx, 1)[0];
+      tgt.discards.push(disc);
+      addLog(gs, `${actor.name} が ${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」を捨てさせました（死神）。`, 'act');
+      if (disc.rank === 10) { addLog(gs, '英雄が死神で脱落→転生！', 'elim'); elimRebirth(gs, tgt); }
+      else if (!tgt.hand.length) eliminate(gs, tgt, true);
+      if (!checkWin(gs)) await endTurn(gs);
     };
-    g('_rb0').addEventListener('click',()=>doR(0),{once:true});
-    g('_rb1').addEventListener('click',()=>doR(1),{once:true});
+    q('_rb0').addEventListener('click', () => pick(0), { once: true });
+    q('_rb1').addEventListener('click', () => pick(1), { once: true });
   });
 }
 
-// 乙女
-function fxMai(gs,actor){
-  actor.protected=true;
-  lg(gs,`${actor.name} は守護状態になりました。`,'act');
+function fx乙女(gs, actor) {
+  actor.protected = true;
+  addLog(gs, `${actor.name} は守護状態になりました。`, 'act');
 }
 
-// 占師
-async function fxSeer(gs,actor){
-  const targets=alv(gs).filter(p=>p.id!==actor.id&&!p.protected);
-  if(!targets.length){lg(gs,'対象なし','act');await endTurn(gs);return;}
-  gs.phase='effect-pending'; await push(gs); renderGame(gs);
-  pickTgt('占師 - 透視','手札を覗く相手を指名してください',targets,async tgt=>{
-    lg(gs,`${actor.name} が ${tgt.name} の手札を確認しました。`,'act');
-    showMod('占師 - 透視結果',`${tgt.name} の手札を確認しました。`,
-      `<div class="pbox">${cHTML(tgt.hand[0],true)}</div>
+async function fx占師(gs, actor) {
+  const targets = alivePlayers(gs).filter(p => p.id !== actor.id && !p.protected);
+  if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
+  gs.phase = 'effect-pending';
+  await pushGS(gs); renderGame(gs);
+  pickTarget('占師 - 透視', '手札を覗く相手を指名してください', targets, async tgt => {
+    addLog(gs, `${actor.name} が ${tgt.name} の手札を確認しました。`, 'act');
+    showModal('占師 - 透視結果', `${tgt.name} の手札を確認しました。`,
+      `<div class="pbox">${cardHTML(tgt.hand[0], true)}</div>
        <div class="pnote">この情報は他のプレイヤーに秘密にしてください</div>
-       <div class="mbtns"><button class="btn btn-o btn-sm" id="_sok">確認</button></div>`);
-    await push(gs); renderGame(gs);
-    g('_sok').addEventListener('click',async()=>{cmod();await endTurn(gs);},{once:true});
+       <div class="mbtns"><button class="btn btn-o btn-sm" id="_sok">確認</button></div>`
+    );
+    await pushGS(gs); renderGame(gs);
+    q('_sok').addEventListener('click', async () => { closeModal(); await endTurn(gs); }, { once: true });
   });
 }
 
-// 兵士
-async function fxSol(gs,actor){
-  const targets=alv(gs).filter(p=>p.id!==actor.id&&!p.protected);
-  if(!targets.length){lg(gs,'対象なし','act');await endTurn(gs);return;}
-  gs.phase='effect-pending'; await push(gs); renderGame(gs);
-  pickTgt('兵士 - 捜査','言い当てる相手を指名してください',targets,async tgt=>{
-    showMod('兵士 - 捜査',`${tgt.name} の手札ランクを選んでください`,
-      `<div class="mrsel">${[1,2,3,4,5,6,7,8,9].map(r=>`<div class="rb" id="_r${r}">${r}</div>`).join('')}</div>
-       <div class="mbtns"><button class="btn btn-o btn-sm" id="_solok" disabled>宣言する</button></div>`);
-    let guess=null;
-    [1,2,3,4,5,6,7,8,9].forEach(r=>{
-      g(`_r${r}`).addEventListener('click',()=>{
-        document.querySelectorAll('.rb').forEach(b=>b.classList.remove('on'));
-        g(`_r${r}`).classList.add('on'); guess=r; g('_solok').disabled=false;
+async function fx兵士(gs, actor) {
+  const targets = alivePlayers(gs).filter(p => p.id !== actor.id && !p.protected);
+  if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
+  gs.phase = 'effect-pending';
+  await pushGS(gs); renderGame(gs);
+  pickTarget('兵士 - 捜査', '言い当てる相手を指名してください', targets, async tgt => {
+    showModal('兵士 - 捜査', `${tgt.name} の手札ランクを選んでください`,
+      `<div class="mrsel">${[1,2,3,4,5,6,7,8,9].map(r =>
+        `<div class="rb" id="_r${r}">${r}</div>`).join('')}</div>
+       <div class="mbtns"><button class="btn btn-o btn-sm" id="_solok" disabled>宣言する</button></div>`
+    );
+    let guess = null;
+    for (const r of [1,2,3,4,5,6,7,8,9]) {
+      q(`_r${r}`).addEventListener('click', () => {
+        document.querySelectorAll('.rb').forEach(b => b.classList.remove('on'));
+        q(`_r${r}`).classList.add('on');
+        guess = r;
+        q('_solok').disabled = false;
       });
-    });
-    g('_solok').addEventListener('click',async()=>{
-      if(guess===null)return; cmod();
-      const actual=tgt.hand[0]?.rank;
-      lg(gs,`${actor.name} が ${tgt.name} の手札を「${guess}」と宣言。`,'act');
-      if(guess===actual){
-        lg(gs,`正解！${tgt.name} の手札は ${actual}${CD[actual].name}。脱落！`,'elim');
-        if(actual===10) eliR(gs,tgt); else eli(gs,tgt,true);
-      }else{
-        lg(gs,'不正解。','act');
+    }
+    q('_solok').addEventListener('click', async () => {
+      if (guess === null) return;
+      closeModal();
+      const actual = tgt.hand[0]?.rank;
+      addLog(gs, `${actor.name} が ${tgt.name} の手札を「${guess}」と宣言。`, 'act');
+      if (guess === actual) {
+        addLog(gs, `正解！${tgt.name} の手札は ${actual}${CD[actual].name}。脱落！`, 'elim');
+        if (actual === 10) elimRebirth(gs, tgt); else eliminate(gs, tgt, true);
+      } else {
+        addLog(gs, '不正解。', 'act');
       }
-      if(!chkW(gs)) await endTurn(gs);
-    },{once:true});
+      if (!checkWin(gs)) await endTurn(gs);
+    }, { once: true });
   });
 }
 
-// 少年
-async function fxBoy(gs,actor){
-  if(!gs.boyPlayed){
-    gs.boyPlayed=true;
-    lg(gs,'少年1枚目。効果なし（2枚目で公開処刑）。','act');
+async function fx少年(gs, actor) {
+  if (!gs.boyPlayed) {
+    gs.boyPlayed = true;
+    addLog(gs, '少年1枚目。効果なし（2枚目で公開処刑）。', 'act');
     await endTurn(gs);
-  }else{
-    lg(gs,'少年2枚目！公開処刑発動！','imp');
-    // 少年版公開処刑（英雄は転生可）
-    const targets=alv(gs).filter(p=>p.id!==actor.id&&!p.protected);
-    if(!targets.length){lg(gs,'対象なし','act');await endTurn(gs);return;}
-    gs.phase='effect-pending'; await push(gs); renderGame(gs);
-    pickTgt('少年(革命) - 公開処刑','相手を指名してください',targets,async tgt=>{
-      if(!gs.deck.length){lg(gs,'山札なし','act');await endTurn(gs);return;}
+  } else {
+    addLog(gs, '少年2枚目！公開処刑発動！', 'imp');
+    const targets = alivePlayers(gs).filter(p => p.id !== actor.id && !p.protected);
+    if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
+    gs.phase = 'effect-pending';
+    await pushGS(gs); renderGame(gs);
+    pickTarget('少年(革命) - 公開処刑', '相手を指名してください', targets, async tgt => {
+      if (!gs.deck.length) { addLog(gs, '山札なし', 'act'); await endTurn(gs); return; }
       tgt.hand.push(gs.deck.shift());
-      pickCC(`少年 - ${tgt.name} の手札`,'捨てさせるカードを選んでください（英雄なら転生可）。',tgt.hand,async ci=>{
-        const d=tgt.hand.splice(ci,1)[0]; tgt.discards.push(d);
-        lg(gs,`${actor.name} が ${tgt.name} の「${d.rank} ${CD[d.rank].name}」を捨てさせました（少年）。`,'act');
-        if(d.rank===10){lg(gs,'英雄が少年で脱落→転生！','elim');eliR(gs,tgt);}
-        else if(!tgt.hand.length) eli(gs,tgt,false);
-        if(!chkW(gs)) await endTurn(gs);
+      pickCard(`少年 - ${tgt.name} の手札`, '捨てさせるカードを選んでください（英雄なら転生可）。', tgt.hand, async ci => {
+        const disc = tgt.hand.splice(ci, 1)[0];
+        tgt.discards.push(disc);
+        addLog(gs, `${actor.name} が ${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」を捨てさせました（少年）。`, 'act');
+        if (disc.rank === 10) { addLog(gs, '英雄が少年で脱落→転生！', 'elim'); elimRebirth(gs, tgt); }
+        else if (!tgt.hand.length) eliminate(gs, tgt, false);
+        if (!checkWin(gs)) await endTurn(gs);
       });
     });
   }
 }
 
-// 賢者ピック
-function sagePick(gs,drawn){
-  let sel=null;
-  showMod('賢者 - 選択',`${gs.players[gs.currentTurn].name} が引いた${drawn.length}枚から1枚選んでください`,
-    `<div class="mch">${drawn.map((c,i)=>`<div class="mcc c${c.rank}" id="_sp${i}">${cIn(c)}</div>`).join('')}</div>
-     <div class="mbtns"><button class="btn btn-o btn-sm" id="_spok" disabled>選択</button></div>`);
-  drawn.forEach((_,i)=>{
-    g(`_sp${i}`).addEventListener('click',()=>{
-      document.querySelectorAll('.mcc').forEach(e=>e.classList.remove('on'));
-      g(`_sp${i}`).classList.add('on'); sel=i; g('_spok').disabled=false;
+function showSagePick(gs, drawn) {
+  let sel = null;
+  showModal('賢者 - 選択',
+    `${gs.players[gs.currentTurn].name} が引いた${drawn.length}枚から1枚選んでください`,
+    `<div class="mch">${drawn.map((c, i) => `<div class="mcc c${c.rank}" id="_sp${i}">${cardInner(c)}</div>`).join('')}</div>
+     <div class="mbtns"><button class="btn btn-o btn-sm" id="_spok" disabled>選択</button></div>`
+  );
+  drawn.forEach((_, i) => {
+    q(`_sp${i}`).addEventListener('click', () => {
+      document.querySelectorAll('.mcc').forEach(e => e.classList.remove('on'));
+      q(`_sp${i}`).classList.add('on');
+      sel = i;
+      q('_spok').disabled = false;
     });
   });
-  g('_spok').addEventListener('click',async()=>{
-    if(sel===null)return;
-    const chosen=drawn[sel], rest=drawn.filter((_,i)=>i!==sel);
-    const actor=gs.players[gs.currentTurn];
+  q('_spok').addEventListener('click', async () => {
+    if (sel === null) return;
+    const chosen = drawn[sel];
+    const rest   = drawn.filter((_, i) => i !== sel);
+    const actor  = gs.players[gs.currentTurn];
     actor.hand.push(chosen);
-    gs.deck.push(...rest); gs.deck=shuf(gs.deck);
-    gs.drawnId=chosen.id; gs.phase='choose';
-    lg(gs,`${actor.name} が「${chosen.rank} ${CD[chosen.rank].name}」を選びました。`,'act');
-    cmod(); await push(gs); renderGame(gs);
-  },{once:true});
+    gs.deck.push(...rest);
+    gs.deck = shuffle(gs.deck);
+    gs.drawnId = chosen.id;
+    gs.phase = 'choose';
+    addLog(gs, `${actor.name} が「${chosen.rank} ${CD[chosen.rank].name}」を選びました。`, 'act');
+    closeModal();
+    await pushGS(gs);
+    renderGame(gs);
+  }, { once: true });
 }
 
-// ══ HELPERS ══
-function alv(gs){return gs.players.filter(p=>!p.eliminated);}
-function cl(gs){return JSON.parse(JSON.stringify(gs));}
+/* ═══════════════════════════════════════
+   ゲームヘルパー
+═══════════════════════════════════════ */
+function alivePlayers(gs) { return gs.players.filter(p => !p.eliminated); }
+function deepCopy(gs)     { return JSON.parse(JSON.stringify(gs)); }
 
-function eli(gs,p){
-  if(p.eliminated)return;
-  p.eliminated=true;
-  const cs=p.hand.map(c=>`${c.rank}${CD[c.rank].name}`).join(',');
-  if(cs)lg(gs,`${p.name} 脱落。手札: ${cs}`,'elim');
-  p.discards.push(...p.hand); p.hand=[];
+function eliminate(gs, p, _rebirth) {
+  if (p.eliminated) return;
+  p.eliminated = true;
+  const cards = p.hand.map(c => `${c.rank}${CD[c.rank].name}`).join(',');
+  if (cards) addLog(gs, `${p.name} 脱落。手札: ${cards}`, 'elim');
+  p.discards.push(...p.hand);
+  p.hand = [];
 }
-function eliR(gs,p){
-  if(!gs.rebirthUsed&&gs.rebirthCard){
-    lg(gs,`${p.name} の英雄が転生！`,'imp');
-    p.discards.push(...p.hand); p.hand=[];
+
+function elimRebirth(gs, p) {
+  if (!gs.rebirthUsed && gs.rebirthCard) {
+    addLog(gs, `${p.name} の英雄が転生！`, 'imp');
+    p.discards.push(...p.hand);
+    p.hand = [];
     p.hand.push(gs.rebirthCard);
-    gs.rebirthCard=null; gs.rebirthUsed=true;
-    lg(gs,`${p.name} が転生札「${p.hand[0].rank} ${CD[p.hand[0].rank].name}」で復帰！`,'imp');
-  }else{
-    lg(gs,`転生札なし。${p.name} 脱落。`,'elim');
-    eli(gs,p);
+    gs.rebirthCard = null;
+    gs.rebirthUsed = true;
+    addLog(gs, `${p.name} が転生札「${p.hand[0].rank} ${CD[p.hand[0].rank].name}」で復帰！`, 'imp');
+  } else {
+    addLog(gs, `転生札なし。${p.name} 脱落。`, 'elim');
+    eliminate(gs, p, false);
   }
 }
-function chkW(gs){
-  const a=alv(gs);
-  if(a.length<=1){
-    endGame(gs,a.length===1?'survivor':'all');
+
+function checkWin(gs) {
+  const alive = alivePlayers(gs);
+  if (alive.length <= 1) {
+    endGame(gs, alive.length === 1 ? 'survivor' : 'all');
     return true;
   }
   return false;
 }
-async function endGame(gs,reason){
-  gs.gameOver=true;
-  const a=alv(gs);
-  if(reason==='survivor') gs.winners=a.map(p=>p.id);
-  else if(reason==='deck'){
-    const mx=Math.max(...a.map(p=>p.hand[0]?.rank??0));
-    gs.winners=a.filter(p=>(p.hand[0]?.rank??0)===mx).map(p=>p.id);
-  }else gs.winners=[];
-  const wn=gs.winners.map(id=>gs.players[id].name);
-  lg(gs,wn.length===1?`${wn[0]} の勝利！`:wn.length>1?`${wn.join('と')} が引き分け`:'引き分け','imp');
-  await dbUpd(`rooms/${rc}`,{gameState:gs,status:'ended'});
+
+async function endGame(gs, reason) {
+  gs.gameOver = true;
+  const alive = alivePlayers(gs);
+  if (reason === 'survivor') {
+    gs.winners = alive.map(p => p.id);
+  } else if (reason === 'deck') {
+    const mx = Math.max(...alive.map(p => p.hand[0]?.rank ?? 0));
+    gs.winners = alive.filter(p => (p.hand[0]?.rank ?? 0) === mx).map(p => p.id);
+  } else {
+    gs.winners = [];
+  }
+  const wn = gs.winners.map(id => gs.players[id].name);
+  addLog(gs, wn.length === 1 ? `${wn[0]} の勝利！` : wn.length > 1 ? `${wn.join('と')} が引き分け` : '引き分け', 'imp');
+  await setField(`rooms/${roomCode}/status`, 'ended');
+  await saveGS(roomCode, gs);
 }
-function lg(gs,msg,type='act'){
-  if(!gs.log)gs.log=[];
-  gs.log.push({msg,type});
-  if(gs.log.length>80)gs.log=gs.log.slice(-80);
+
+function addLog(gs, msg, type = 'act') {
+  if (!gs.log) gs.log = [];
+  gs.log.push({ msg, type });
+  if (gs.log.length > 80) gs.log = gs.log.slice(-80);
 }
 
-// ══ RENDER ══
-function renderGame(gs){
-  if(!gs)return;
-  lastGS=gs;
-  g('g-deck').textContent=gs.deck.length;
-  g('g-reb').textContent=gs.rebirthUsed?'なし':'あり';
-  const cp=gs.players[gs.currentTurn];
-  const myTurn=cp&&cp.uid===myUid&&!cp.eliminated;
-  g('g-turn').textContent=cp?.name??'-';
-  g('g-sage').innerHTML=cp?.sageMode
-    ?`<span class="mytag" style="background:rgba(125,60,152,.2);border-color:var(--purple);color:#c39bd3">賢者モード</span>`:'';
+/* ═══════════════════════════════════════
+   描画
+═══════════════════════════════════════ */
+function renderGame(gs) {
+  if (!gs) return;
+  lastGS = gs;
 
-  const pa=g('g-pa'); pa.innerHTML='';
-  for(const p of gs.players){
-    const me=p.uid===myUid, ac=p.id===gs.currentTurn;
-    const div=document.createElement('div');
-    div.className=`pz${ac?' act':''}${p.eliminated?' ded':''}${p.protected?' prt':''}${me?' me':''}`;
-    let bd='';
-    if(ac&&!p.eliminated) bd+=`<span class="badge bt">手番</span>`;
-    if(p.eliminated)       bd+=`<span class="badge be">脱落</span>`;
-    if(p.protected)        bd+=`<span class="badge bp">守護</span>`;
-    if(p.sageMode)         bd+=`<span class="badge bs">賢者</span>`;
-    if(me)                 bd+=`<span class="badge bm">あなた</span>`;
+  q('g-deck').textContent = gs.deck.length;
+  q('g-reb').textContent  = gs.rebirthUsed ? 'なし' : 'あり';
 
-    let hh='';
-    if(me&&!p.eliminated){
-      const canPlay=ac&&gs.phase==='choose';
-      hh=p.hand.map((c,i)=>{
-        const dr=gs.drawnId!==null&&c.id===gs.drawnId;
-        const sel=picked===i, nop=c.rank===10;
-        return `<div class="hc c${c.rank}${canPlay&&!nop?' sp':''}${sel?' pk':''}"
-          data-idx="${i}" data-ok="${canPlay&&!nop?1:0}" title="${CD[c.rank].desc}">
-          ${dr?'<div class="ddot"></div>':''}${cIn(c)}</div>`;
+  const cp      = gs.players[gs.currentTurn];
+  const myTurn  = cp && cp.uid === myUid && !cp.eliminated;
+  q('g-turn').textContent = cp ? cp.name : '-';
+  q('g-sage').innerHTML   = cp && cp.sageMode
+    ? `<span class="mytag" style="background:rgba(125,60,152,.2);border-color:var(--purple);color:#c39bd3">賢者モード</span>`
+    : '';
+
+  const pa = q('g-pa');
+  pa.innerHTML = '';
+  for (const p of gs.players) {
+    const me = p.uid === myUid, act = p.id === gs.currentTurn;
+    const div = document.createElement('div');
+    div.className = `pz${act ? ' act' : ''}${p.eliminated ? ' ded' : ''}${p.protected ? ' prt' : ''}${me ? ' me' : ''}`;
+
+    let badges = '';
+    if (act && !p.eliminated) badges += `<span class="badge bt">手番</span>`;
+    if (p.eliminated)         badges += `<span class="badge be">脱落</span>`;
+    if (p.protected)          badges += `<span class="badge bp">守護</span>`;
+    if (p.sageMode)           badges += `<span class="badge bs">賢者</span>`;
+    if (me)                   badges += `<span class="badge bm">あなた</span>`;
+
+    let handHTML = '';
+    if (me && !p.eliminated) {
+      const canPlay = act && gs.phase === 'choose';
+      handHTML = p.hand.map((c, i) => {
+        const drawn = gs.drawnId !== null && c.id === gs.drawnId;
+        const sel   = pickedIdx === i;
+        const noPlay = c.rank === 10;
+        return `<div class="hc c${c.rank}${canPlay && !noPlay ? ' sp' : ''}${sel ? ' pk' : ''}"
+          data-idx="${i}" data-ok="${canPlay && !noPlay ? 1 : 0}" title="${CD[c.rank].desc}">
+          ${drawn ? '<div class="ddot"></div>' : ''}
+          ${cardInner(c)}
+        </div>`;
       }).join('');
-    }else if(!p.eliminated){
-      hh=p.hand.map(()=>`<div class="hc back"><div class="ci"><div class="cr" style="color:var(--dim);font-size:13px">?</div></div></div>`).join('');
+    } else if (!p.eliminated) {
+      handHTML = p.hand.map(() =>
+        `<div class="hc back"><div class="ci"><div class="cr" style="color:var(--dim);font-size:13px">?</div></div></div>`
+      ).join('');
     }
-    const dh=p.discards.map(c=>`<div class="mc c${c.rank}">${cIn(c,true)}</div>`).join('');
-    div.innerHTML=
-      `<div class="pzhd"><div class="pd"></div><div class="pznm">${p.name}</div><div class="pbs">${bd}</div></div>
-       <div class="pcs">${hh}${p.discards.length?`<div class="sep"></div><div class="dp">${dh}</div>`:''}</div>`;
+
+    const discHTML = p.discards.map(c =>
+      `<div class="mc c${c.rank}">${cardInner(c, true)}</div>`
+    ).join('');
+
+    div.innerHTML =
+      `<div class="pzhd"><div class="pd"></div><div class="pznm">${p.name}</div><div class="pbs">${badges}</div></div>
+       <div class="pcs">${handHTML}${p.discards.length ? `<div class="sep"></div><div class="dp">${discHTML}</div>` : ''}</div>`;
     pa.appendChild(div);
   }
 
-  // カードクリックのイベント委譲
-  pa.querySelectorAll('.hc[data-ok="1"]').forEach(el=>{
-    el.addEventListener('click',()=>{
-      const idx=+el.dataset.idx; picked=idx;
-      const c=lastGS.players[lastGS.currentTurn].hand[idx];
-      g('cdsc').className='cdsc vis';
-      g('cdsc').textContent=`${c.rank} ${CD[c.rank].name}（${CD[c.rank].eff}）: ${CD[c.rank].desc}`;
+  // カードクリック委譲
+  pa.querySelectorAll('.hc[data-ok="1"]').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = +el.dataset.idx;
+      pickedIdx = idx;
+      const c = lastGS.players[lastGS.currentTurn].hand[idx];
+      q('cdsc').className = 'cdsc vis';
+      q('cdsc').textContent = `${c.rank} ${CD[c.rank].name}（${CD[c.rank].eff}）: ${CD[c.rank].desc}`;
       renderGame(lastGS);
     });
   });
 
   // アクションパネル
-  const at=g('aplt'), ab=g('abtns'); ab.innerHTML='';
-  if(gs.gameOver){at.textContent='ゲーム終了';return;}
-  if(!myTurn){
-    at.textContent='他のプレイヤーの手番';
-    ab.innerHTML=`<div class="wmsg">⏳ ${cp?.name} が操作中...</div>`;
+  const atEl = q('aplt'), ab = q('abtns');
+  ab.innerHTML = '';
+  if (gs.gameOver) { atEl.textContent = 'ゲーム終了'; return; }
+  if (!myTurn) {
+    atEl.textContent = '他のプレイヤーの手番';
+    ab.innerHTML = `<div class="wmsg">⏳ ${cp ? cp.name : '...'} が操作中...</div>`;
     return;
   }
-  if(gs.phase==='choose'){
-    if(picked!==null){
-      const c=gs.players[gs.currentTurn].hand[picked];
-      at.textContent='このカードを出しますか？';
-      const ok=document.createElement('button'); ok.className='ab cf';
-      ok.textContent=`「${c.rank} ${CD[c.rank].name}」を出す`;
-      ok.addEventListener('click',()=>{const i=picked; picked=null; playCard(i);});
-      const ng=document.createElement('button'); ng.className='ab';
-      ng.textContent='キャンセル';
-      ng.addEventListener('click',()=>{picked=null; g('cdsc').classList.remove('vis'); renderGame(lastGS);});
-      ab.append(ok,ng);
-    }else{
-      at.textContent='カードを選んでください';
-      ab.innerHTML=`<span style="font-size:11px;color:var(--dim)">上のカードをクリックして選択</span>`;
+  if (gs.phase === 'choose') {
+    if (pickedIdx !== null) {
+      const c = gs.players[gs.currentTurn].hand[pickedIdx];
+      atEl.textContent = 'このカードを出しますか？';
+      const okBtn = document.createElement('button');
+      okBtn.className = 'ab cf';
+      okBtn.textContent = `「${c.rank} ${CD[c.rank].name}」を出す`;
+      okBtn.addEventListener('click', () => { const i = pickedIdx; pickedIdx = null; playCard(i); });
+      const ngBtn = document.createElement('button');
+      ngBtn.className = 'ab';
+      ngBtn.textContent = 'キャンセル';
+      ngBtn.addEventListener('click', () => { pickedIdx = null; q('cdsc').classList.remove('vis'); renderGame(lastGS); });
+      ab.append(okBtn, ngBtn);
+    } else {
+      atEl.textContent = 'カードを選んでください';
+      ab.innerHTML = `<span style="font-size:11px;color:var(--dim)">上のカードをクリックして選択</span>`;
     }
-  }else if(gs.phase==='effect-pending'){
-    at.textContent='効果を解決中...';
-  }else{
-    at.textContent='処理中...';
+  } else if (gs.phase === 'effect-pending') {
+    atEl.textContent = '効果を解決中...';
+  } else {
+    atEl.textContent = '処理中...';
   }
 
   // ログ追記
-  if(gs.log&&gs.log.length>logLen){
-    const el=g('glog');
-    for(let i=logLen;i<gs.log.length;i++){
-      const e=gs.log[i], d=document.createElement('div');
-      d.className=`le l${e.type}`; d.textContent=e.msg; el.appendChild(d);
+  if (gs.log && gs.log.length > logLen) {
+    const logEl = q('glog');
+    for (let i = logLen; i < gs.log.length; i++) {
+      const e = gs.log[i];
+      const d = document.createElement('div');
+      d.className = `le l${e.type}`;
+      d.textContent = e.msg;
+      logEl.appendChild(d);
     }
-    el.scrollTop=el.scrollHeight;
-    logLen=gs.log.length;
+    logEl.scrollTop = logEl.scrollHeight;
+    logLen = gs.log.length;
   }
 }
 
-function showResult(gs){
-  setTimeout(()=>{
-    sw('result-screen');
-    const wi=gs.winners||[], wn=wi.map(id=>gs.players[id].name);
-    g('rtl').textContent=wn.length===1?'勝利':'引き分け';
-    g('rwn').textContent=wn.length===1?`🏆 ${wn[0]} の勝利！`:wn.length?`${wn.join(' と ')} が引き分け`:'全員脱落';
-    g('rhands').innerHTML=gs.players.map(p=>{
-      const w=wi.includes(p.id), c=p.hand[0];
-      return `<div class="rpc ${w?'w':''}"><div class="rpn">${p.name}${p.eliminated?' (脱落)':''}</div>
-        ${c?cHTML(c,true):'<div style="color:var(--dim);font-size:11px">手札なし</div>'}</div>`;
+function showResult(gs) {
+  setTimeout(() => {
+    showScreen('result-screen');
+    const wi = gs.winners || [];
+    const wn = wi.map(id => gs.players[id].name);
+    q('rtl').textContent = wn.length === 1 ? '勝利' : '引き分け';
+    q('rwn').textContent = wn.length === 1
+      ? `🏆 ${wn[0]} の勝利！`
+      : wn.length > 1 ? `${wn.join(' と ')} が引き分け` : '全員脱落';
+    q('rhands').innerHTML = gs.players.map(p => {
+      const w = wi.includes(p.id), c = p.hand[0];
+      return `<div class="rpc ${w ? 'w' : ''}">
+        <div class="rpn">${p.name}${p.eliminated ? ' (脱落)' : ''}</div>
+        ${c ? cardHTML(c, true) : '<div style="color:var(--dim);font-size:11px">手札なし</div>'}
+      </div>`;
     }).join('');
-  },700);
+  }, 700);
 }
 
-// ══ CARD HTML ══
-function cIn(c,mini=false){
-  return `<div class="ci"><div class="cr">${c.rank}</div><div class="cn">${CD[c.rank].name}</div>${mini?'':`<div class="ce">${CD[c.rank].eff}</div>`}</div>`;
+/* ═══════════════════════════════════════
+   カードHTML
+═══════════════════════════════════════ */
+function cardInner(c, mini = false) {
+  return `<div class="ci">
+    <div class="cr">${c.rank}</div>
+    <div class="cn">${CD[c.rank].name}</div>
+    ${mini ? '' : `<div class="ce">${CD[c.rank].eff}</div>`}
+  </div>`;
 }
-function cHTML(c,large=false){
-  const s=large?'width:var(--cw);height:var(--ch)':'width:44px;height:64px';
-  return `<div class="hc c${c.rank}" style="${s};border-radius:6px;border:1px solid">${cIn(c)}</div>`;
+function cardHTML(c, large = false) {
+  const s = large ? 'width:var(--cw);height:var(--ch)' : 'width:44px;height:64px';
+  return `<div class="hc c${c.rank}" style="${s};border-radius:6px;border:1px solid">${cardInner(c)}</div>`;
 }
 
-// ══ MODALS ══
-function showMod(title,text,body){
-  g('mt').textContent=title; g('mtx').textContent=text; g('mbd').innerHTML=body;
-  g('mov').classList.add('on');
+/* ═══════════════════════════════════════
+   モーダル
+═══════════════════════════════════════ */
+function showModal(title, text, body) {
+  q('mt').textContent  = title;
+  q('mtx').textContent = text;
+  q('mbd').innerHTML   = body;
+  q('mov').classList.add('on');
 }
-function cmod(){g('mov').classList.remove('on');}
-function pickTgt(title,text,targets,cb){
-  showMod(title,text,
-    `<div class="mtgts">${targets.map(t=>`<div class="tg" data-id="${t.id}">${t.name}</div>`).join('')}</div>`);
-  g('mbd').querySelectorAll('.tg').forEach(el=>{
-    el.addEventListener('click',()=>{
-      const tgt=lastGS.players[+el.dataset.id]; cmod(); cb(tgt);
-    },{once:true});
+function closeModal() { q('mov').classList.remove('on'); }
+
+function pickTarget(title, text, targets, cb) {
+  showModal(title, text,
+    `<div class="mtgts">${targets.map(t =>
+      `<div class="tg" data-id="${t.id}">${t.name}</div>`
+    ).join('')}</div>`
+  );
+  q('mbd').querySelectorAll('.tg').forEach(el => {
+    el.addEventListener('click', () => {
+      const tgt = lastGS.players[+el.dataset.id];
+      closeModal();
+      cb(tgt);
+    }, { once: true });
   });
 }
-function pickCC(title,text,cards,cb){
-  let sel=null;
-  showMod(title,text,
-    `<div class="mch">${cards.map((c,i)=>`<div class="mcc c${c.rank}" data-ci="${i}">${cIn(c)}</div>`).join('')}</div>
-     <div class="mbtns"><button class="btn btn-o btn-sm" id="_ccok" disabled>捨てさせる</button></div>`);
-  g('mbd').querySelectorAll('.mcc').forEach(el=>{
-    el.addEventListener('click',()=>{
-      g('mbd').querySelectorAll('.mcc').forEach(e=>e.classList.remove('on'));
-      el.classList.add('on'); sel=+el.dataset.ci; g('_ccok').disabled=false;
+
+function pickCard(title, text, cards, cb) {
+  let sel = null;
+  showModal(title, text,
+    `<div class="mch">${cards.map((c, i) =>
+      `<div class="mcc c${c.rank}" data-ci="${i}">${cardInner(c)}</div>`
+    ).join('')}</div>
+     <div class="mbtns"><button class="btn btn-o btn-sm" id="_ccok" disabled>捨てさせる</button></div>`
+  );
+  q('mbd').querySelectorAll('.mcc').forEach(el => {
+    el.addEventListener('click', () => {
+      q('mbd').querySelectorAll('.mcc').forEach(e => e.classList.remove('on'));
+      el.classList.add('on');
+      sel = +el.dataset.ci;
+      q('_ccok').disabled = false;
     });
   });
-  g('_ccok').addEventListener('click',()=>{if(sel===null)return; cmod(); cb(sel);},{once:true});
+  q('_ccok').addEventListener('click', () => {
+    if (sel === null) return;
+    closeModal();
+    cb(sel);
+  }, { once: true });
 }
 
-// ══ UTILS ══
-function g(id){return document.getElementById(id);}
-function sw(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));g(id).classList.add('active');}
-function toast(msg,err=false){
-  const t=g('toast'); t.textContent=msg; t.className=`toast on${err?' err':''}`;
-  clearTimeout(window._tt); window._tt=setTimeout(()=>t.classList.remove('on'),2800);
+/* ═══════════════════════════════════════
+   ユーティリティ
+═══════════════════════════════════════ */
+function q(id)       { return document.getElementById(id); }
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  q(id).classList.add('active');
 }
-function backToTitle(){
-  if(unsub){unsub();unsub=null;}
-  logLen=0; picked=null; localReady=false; processing=false; lastProcessedPhase='';
-  sw('title-screen');
+function toast(msg, err = false) {
+  const t = q('toast');
+  t.textContent = msg;
+  t.className   = `toast on${err ? ' err' : ''}`;
+  clearTimeout(window._tt);
+  window._tt = setTimeout(() => t.classList.remove('on'), 2800);
+}
+function backToTitle() {
+  if (unsubRoom) { unsubRoom(); unsubRoom = null; }
+  logLen = 0; pickedIdx = null; localReady = false;
+  processing = false; lastSeq = -1;
+  showScreen('title-screen');
 }
 
-// ══ EVENTS ══
-document.addEventListener('DOMContentLoaded',()=>{
-  g('create-btn').addEventListener('click',createRoom);
-  g('join-btn')  .addEventListener('click',joinRoom);
-  g('ready-btn') .addEventListener('click',toggleReady);
-  g('start-btn') .addEventListener('click',startGame);
-  g('leave-btn') .addEventListener('click',backToTitle);
-  g('back-btn')  .addEventListener('click',backToTitle);
-  g('code-disp') .addEventListener('click',()=>{
-    navigator.clipboard.writeText(rc).then(()=>toast('コードをコピーしました！')).catch(()=>toast(rc));
+/* ═══════════════════════════════════════
+   イベント登録
+═══════════════════════════════════════ */
+document.addEventListener('DOMContentLoaded', () => {
+  q('create-btn').addEventListener('click', createRoom);
+  q('join-btn')  .addEventListener('click', joinRoom);
+  q('ready-btn') .addEventListener('click', toggleReady);
+  q('start-btn') .addEventListener('click', startGame);
+  q('leave-btn') .addEventListener('click', backToTitle);
+  q('back-btn')  .addEventListener('click', backToTitle);
+  q('code-disp') .addEventListener('click', () => {
+    navigator.clipboard.writeText(roomCode)
+      .then(() => toast('コードをコピーしました！'))
+      .catch(() => toast(roomCode));
   });
-  g('join-code').addEventListener('keydown',e=>{if(e.key==='Enter')joinRoom();});
+  q('join-code').addEventListener('keydown', e => { if (e.key === 'Enter') joinRoom(); });
 });
 
 init();
