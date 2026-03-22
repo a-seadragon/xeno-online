@@ -482,8 +482,50 @@ function initGS(rp){
   };
 }
 
+// ══ Firebase配列正規化 ══
+// Firebase は JS配列を {0:{...},1:{...}} のオブジェクトで保存するため
+// 取得時に必ず配列へ戻す
+function toArr(v){
+  if(!v) return [];
+  if(Array.isArray(v)) return v;
+  return Object.values(v);
+}
+function normalizeCard(c){
+  if(!c) return c;
+  return {rank:+(c.rank), id:+(c.id)};
+}
+function normalizeGS(gs){
+  if(!gs) return gs;
+  // players
+  gs.players = toArr(gs.players).map(p=>({
+    ...p,
+    id: +(p.id),
+    hand:     toArr(p.hand).map(normalizeCard),
+    discards: toArr(p.discards).map(normalizeCard),
+    eliminated: !!p.eliminated,
+    protected:  !!p.protected,
+    sageMode:   !!p.sageMode,
+  }));
+  // deck
+  gs.deck = toArr(gs.deck).map(normalizeCard);
+  // log
+  gs.log = toArr(gs.log);
+  // winners
+  gs.winners = toArr(gs.winners).map(Number);
+  // rebirthCard
+  if(gs.rebirthCard) gs.rebirthCard = normalizeCard(gs.rebirthCard);
+  // scalars
+  gs.currentTurn = +(gs.currentTurn||0);
+  gs.seq         = +(gs.seq||0);
+  gs.boyPlayed   = !!gs.boyPlayed;
+  gs.gameOver    = !!gs.gameOver;
+  gs.rebirthUsed = !!gs.rebirthUsed;
+  return gs;
+}
+
 // ══ REALTIME HANDLER（Firebaseリスナーから呼ばれる）══
-function onRoomUpdate(gs){
+function onRoomUpdate(rawGs){
+  const gs = normalizeGS(rawGs);
   lastGS=gs;
 
   // ゲーム終了
@@ -493,8 +535,7 @@ function onRoomUpdate(gs){
   const isMyTurn = cp && cp.uid===myUid && !cp.eliminated;
 
   // phase=draw かつ自分のターン → ドロー処理を実行
-  // processing フラグで二重実行を防ぐ
-  // lastProcessedPhase で同一seq の再処理を防ぐ
+  // processing フラグ + stateKey で二重実行を防ぐ
   const stateKey = `${gs.seq}-${gs.phase}-${gs.currentTurn}`;
   if(gs.phase==='draw' && isMyTurn && !processing && stateKey!==lastProcessedPhase){
     lastProcessedPhase=stateKey;
