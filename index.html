@@ -323,7 +323,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-通常版 β(ver0.1.2)</div>
+    <div class="logo-sub">ゼノ-通常版 β(ver0.1.3)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -783,15 +783,32 @@ function onGsReceived(gs) {
     return;
   }
 
-  const cp = gs.players[gs.currentTurn];
+  const cp      = gs.players[gs.currentTurn];
   const isMyTurn = cp && cp.uid === myUid && !cp.eliminated;
 
-  // 自分のターンかつdrawフェーズ → カードを引く処理を実行
-  // seqで同一状態の二重実行を防ぐ
+  // ── カード通知フェーズ：自分以外のプレイヤーに通知を表示 ──
+  if (gs.phase === 'card-announce' && gs.lastPlayedCard) {
+    const lp = gs.lastPlayedCard;
+    const nseq = lp.notifySeq || 0;
+    // 自分が出したカードは既にshowCardAnnounceAsyncで表示済み → スキップ
+    const iAmActor = gs.players[gs.currentTurn]?.uid === myUid;
+    if (!iAmActor && nseq !== _lastCardAnnounceSeq) {
+      _lastCardAnnounceSeq = nseq;
+      renderGame(gs);
+      showCardAnnounceAsync(lp.playerName, lp).catch(() => {});
+    } else {
+      renderGame(gs);
+    }
+    return;
+  }
+
+  // ── drawフェーズ：ターン通知を表示してからドロー ──
   if (gs.phase === 'draw' && isMyTurn && !processing && gs.seq !== lastSeq) {
     lastSeq = gs.seq;
     processing = true;
-    execDraw(deepCopy(gs))
+    renderGame(gs); // まず画面更新
+    showTurnAnnounceAsync()
+      .then(() => execDraw(deepCopy(gs)))
       .catch(e => console.error('execDraw error:', e))
       .finally(() => { processing = false; });
     return;
@@ -871,7 +888,13 @@ async function playCard(handIndex) {
   pickedIdx = null;
   q('cdsc').classList.remove('vis');
   addLog(gs, `${actor.name} が「${card.rank} ${CD[card.rank].name}」を出しました。`, 'act');
-  showCardAnnounce(actor.name, card);
+  // gsにカード情報をのせてFirebase経由で全員に通知
+  gs.lastPlayedCard = { rank: card.rank, id: card.id, playerName: actor.name, notifySeq: (gs.seq || 0) + 1 };
+  gs.phase = 'card-announce'; // 通知中フェーズ
+  await pushGS(gs);
+  // 自分は通知を表示してから効果を実行
+  await showCardAnnounceAsync(actor.name, card);
+  gs.phase = 'effect-pending';
   await resolveEffect(gs, card, actor);
 }
 
@@ -1227,8 +1250,7 @@ function renderGame(gs) {
     }
   }
 
-  // ターン開始通知
-  showTurnAnnounce(myTurn);
+
 
   // 相手エリア更新
   const opArea = q('g-opponents');
@@ -1318,35 +1340,43 @@ function renderGame(gs) {
   }
 }
 
-// ターン開始通知
+// ════════ 通知ユーティリティ ════════
 let _lastAnnouncedSeq = -1;
-function showTurnAnnounce(isMyTurn) {
-  if (!lastGS) return;
-  const seq = lastGS.seq || 0;
-  if (isMyTurn && seq !== _lastAnnouncedSeq) {
-    _lastAnnouncedSeq = seq;
-    const el = q('turn-announce');
-    if (!el) return;
+let _lastCardAnnounceSeq = -1;
+
+// Promiseベースのカード通知（表示が終わるまで待てる）
+function showCardAnnounceAsync(playerName, card) {
+  return new Promise(resolve => {
+    const el    = q('card-announce');
+    const label = q('card-announce-label');
+    const cCard = q('card-announce-card');
+    if (!el) { resolve(); return; }
+    label.textContent = `${playerName} が「${card.rank} ${CD[card.rank].name}」を出しました`;
+    cCard.innerHTML = `<div class="hc c${card.rank}" style="width:100px;height:144px;border-radius:10px;border:1px solid;cursor:default">${cardInner(card)}</div>`;
+    el.classList.remove('hide');
     el.classList.add('show');
-    setTimeout(() => el.classList.remove('show'), 1800);
-  }
+    setTimeout(() => {
+      el.classList.add('hide');
+      setTimeout(() => { el.classList.remove('show','hide'); resolve(); }, 400);
+    }, 1600);
+  });
 }
 
-// カード出し通知
-function showCardAnnounce(playerName, card) {
-  const el    = q('card-announce');
-  const label = q('card-announce-label');
-  const cCard = q('card-announce-card');
-  if (!el) return;
-  label.textContent = `${playerName} が出しました`;
-  cCard.innerHTML = `<div class="hc c${card.rank}" style="width:100px;height:144px;border-radius:10px;border:1px solid;cursor:default">${cardInner(card)}</div>`;
-  el.classList.remove('hide');
-  el.classList.add('show');
-  setTimeout(() => {
-    el.classList.add('hide');
-    setTimeout(() => { el.classList.remove('show','hide'); }, 400);
-  }, 1600);
+// Promiseベースのターン通知（表示が終わるまで待てる）
+function showTurnAnnounceAsync() {
+  return new Promise(resolve => {
+    const el = q('turn-announce');
+    if (!el) { resolve(); return; }
+    el.classList.add('show');
+    setTimeout(() => {
+      el.classList.remove('show');
+      resolve();
+    }, 1600);
+  });
 }
+
+// renderGame から呼ぶ非同期なし版（後方互換・何もしない）
+function showTurnAnnounce() {}
 
 function showResult(gs) {
   setTimeout(() => {
