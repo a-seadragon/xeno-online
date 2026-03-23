@@ -283,19 +283,33 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   z-index:2000;opacity:0;transition:all .3s;pointer-events:none;white-space:nowrap;max-width:90vw;text-align:center}
 .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
 .toast.err{border-color:var(--red);color:var(--red-l)}
+/* あなたのターン通知 */
+.turn-announce{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.8);
+  background:linear-gradient(135deg,rgba(20,20,34,.97),rgba(10,10,20,.97));
+  border:1px solid var(--gold);border-radius:12px;padding:20px 40px;
+  font-family:'Cinzel',serif;font-size:18px;color:var(--gold);letter-spacing:4px;
+  z-index:1500;pointer-events:none;opacity:0;transition:all .35s cubic-bezier(.34,1.56,.64,1);
+  box-shadow:0 0 40px rgba(201,168,76,.25),0 8px 32px rgba(0,0,0,.6);white-space:nowrap;text-align:center}
+.turn-announce.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
+/* 自分の捨て札エリア */
+.my-discards{margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.06);
+  display:flex;flex-wrap:wrap;gap:3px;align-items:center}
+.my-disc-lbl{font-family:'Cinzel',serif;font-size:8px;color:var(--dim);letter-spacing:2px;
+  margin-bottom:4px;display:block;opacity:.6}
 ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 </style>
 </head>
 <body>
 <div class="toast" id="toast"></div>
+<div class="turn-announce" id="turn-announce">⚔ あなたのターンです</div>
 
 <!-- TITLE -->
 <div class="screen active" id="title-screen">
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-通常版 β(ver0.1.1)</div>
+    <div class="logo-sub">ゼノ-通常版 β(ver0.1.2)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -381,6 +395,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
       <div class="my-badges" id="my-badges"></div>
     </div>
     <div class="my-hand" id="my-hand"></div>
+    <div class="my-discards" id="my-discards"></div>
   </div>
   <!-- Action panel -->
   <div class="apl">
@@ -1182,7 +1197,20 @@ function renderGame(gs) {
     if (!myMe.hand.length && myMe.eliminated) {
       myHand.innerHTML = `<div style="color:var(--dim);font-family:'Cinzel',serif;font-size:11px;letter-spacing:2px">脱落</div>`;
     }
+
+    // 自分の捨て札
+    const myDiscArea = q('my-discards');
+    if (myDiscArea) {
+      myDiscArea.innerHTML = myMe.discards.length
+        ? `<span class="my-disc-lbl">捨て札</span>${myMe.discards.map(c =>
+            `<div class="mc c${c.rank}" title="${CD[c.rank].name}">${cardInner(c, true)}</div>`
+          ).join('')}`
+        : '';
+    }
   }
+
+  // ターン開始通知
+  showTurnAnnounce(myTurn);
 
   // 相手エリア更新
   const opArea = q('g-opponents');
@@ -1272,6 +1300,20 @@ function renderGame(gs) {
   }
 }
 
+// ターン開始通知
+let _lastAnnouncedSeq = -1;
+function showTurnAnnounce(isMyTurn) {
+  if (!lastGS) return;
+  const seq = lastGS.seq || 0;
+  if (isMyTurn && seq !== _lastAnnouncedSeq) {
+    _lastAnnouncedSeq = seq;
+    const el = q('turn-announce');
+    if (!el) return;
+    el.classList.add('show');
+    setTimeout(() => el.classList.remove('show'), 1800);
+  }
+}
+
 function showResult(gs) {
   setTimeout(() => {
     showScreen('result-screen');
@@ -1282,10 +1324,17 @@ function showResult(gs) {
       ? `🏆 ${wn[0]} の勝利！`
       : wn.length > 1 ? `${wn.join(' と ')} が引き分け` : '全員脱落';
     q('rhands').innerHTML = gs.players.map(p => {
-      const w = wi.includes(p.id), c = p.hand[0];
+      const w = wi.includes(p.id);
+      // 手札 + 最後に持っていたカード（捨て札の最後）を合わせて表示
+      const cards = p.hand.length > 0
+        ? p.hand
+        : (p.discards.length > 0 ? [p.discards[p.discards.length - 1]] : []);
+      const cardsHTML = cards.length > 0
+        ? cards.map(c => cardHTML(c, true)).join('')
+        : `<div style="color:var(--dim);font-size:11px;padding:8px">不明</div>`;
       return `<div class="rpc ${w ? 'w' : ''}">
         <div class="rpn">${p.name}${p.eliminated ? ' (脱落)' : ''}</div>
-        ${c ? cardHTML(c, true) : '<div style="color:var(--dim);font-size:11px">手札なし</div>'}
+        <div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap">${cardsHTML}</div>
       </div>`;
     }).join('');
   }, 700);
