@@ -296,6 +296,16 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   display:flex;flex-wrap:wrap;gap:3px;align-items:center}
 .my-disc-lbl{font-family:'Cinzel',serif;font-size:8px;color:var(--dim);letter-spacing:2px;
   margin-bottom:4px;display:block;opacity:.6}
+/* カード出し通知 */
+.card-announce{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.7);
+  z-index:1600;pointer-events:none;opacity:0;
+  transition:all .4s cubic-bezier(.34,1.56,.64,1);
+  display:flex;flex-direction:column;align-items:center;gap:10px}
+.card-announce.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.card-announce.hide{opacity:0;transform:translate(-50%,-60%) scale(.85);transition:all .4s ease-in}
+.card-announce-label{font-family:'Cinzel',serif;font-size:11px;color:var(--dim);
+  letter-spacing:3px;text-align:center;text-shadow:0 2px 8px rgba(0,0,0,.8)}
+.card-announce-card{filter:drop-shadow(0 0 20px rgba(201,168,76,.4)) drop-shadow(0 8px 24px rgba(0,0,0,.8))}
 ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 </style>
@@ -303,6 +313,10 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 <body>
 <div class="toast" id="toast"></div>
 <div class="turn-announce" id="turn-announce">⚔ あなたのターンです</div>
+<div class="card-announce" id="card-announce">
+  <div class="card-announce-label" id="card-announce-label"></div>
+  <div class="card-announce-card" id="card-announce-card"></div>
+</div>
 
 <!-- TITLE -->
 <div class="screen active" id="title-screen">
@@ -410,7 +424,10 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="rtl" id="rtl">GAME OVER</div>
   <div class="rwn" id="rwn"></div>
   <div class="rhands" id="rhands"></div>
-  <button class="btn btn-g" style="max-width:230px;margin-top:5px" id="back-btn">タイトルへ戻る</button>
+  <div style="display:flex;flex-direction:column;gap:10px;width:100%;max-width:280px;margin-top:10px">
+    <button class="btn btn-g" id="replay-btn">もう一戦！（同じルーム）</button>
+    <button class="btn btn-o btn-sm" style="width:auto;align-self:center" id="back-btn">タイトルへ戻る</button>
+  </div>
 </div>
 
 <!-- MODAL -->
@@ -854,6 +871,7 @@ async function playCard(handIndex) {
   pickedIdx = null;
   q('cdsc').classList.remove('vis');
   addLog(gs, `${actor.name} が「${card.rank} ${CD[card.rank].name}」を出しました。`, 'act');
+  showCardAnnounce(actor.name, card);
   await resolveEffect(gs, card, actor);
 }
 
@@ -1314,6 +1332,22 @@ function showTurnAnnounce(isMyTurn) {
   }
 }
 
+// カード出し通知
+function showCardAnnounce(playerName, card) {
+  const el    = q('card-announce');
+  const label = q('card-announce-label');
+  const cCard = q('card-announce-card');
+  if (!el) return;
+  label.textContent = `${playerName} が出しました`;
+  cCard.innerHTML = `<div class="hc c${card.rank}" style="width:100px;height:144px;border-radius:10px;border:1px solid;cursor:default">${cardInner(card)}</div>`;
+  el.classList.remove('hide');
+  el.classList.add('show');
+  setTimeout(() => {
+    el.classList.add('hide');
+    setTimeout(() => { el.classList.remove('show','hide'); }, 400);
+  }, 1600);
+}
+
 function showResult(gs) {
   setTimeout(() => {
     showScreen('result-screen');
@@ -1422,8 +1456,50 @@ function toast(msg, err = false) {
 function backToTitle() {
   if (unsubRoom) { unsubRoom(); unsubRoom = null; }
   logLen = 0; pickedIdx = null; localReady = false;
-  processing = false; lastSeq = -1;
+  processing = false; lastSeq = -1; _lastAnnouncedSeq = -1;
+  roomCode = ''; isHost = false; myPid = null;
   showScreen('title-screen');
+}
+
+// 同じルームのロビーへ戻る（再戦）
+async function backToLobby() {
+  try {
+    logLen = 0; pickedIdx = null; processing = false;
+    lastSeq = -1; _lastAnnouncedSeq = -1; lastGS = null;
+
+    // ルームをlobby状態にリセット（gsJsonクリア、全員ready=false）
+    const snap = await getRoom(roomCode);
+    if (!snap.exists()) { backToTitle(); return; }
+    const room = snap.val();
+    const players = Array.isArray(room.players)
+      ? room.players : Object.values(room.players);
+    // 全員のready状態をリセット
+    const resetPlayers = players.map(p => ({ ...p, ready: false }));
+    await setField(`rooms/${roomCode}/status`, 'lobby');
+    await setField(`rooms/${roomCode}/gsJson`, null);
+    await setField(`rooms/${roomCode}/players`, resetPlayers);
+    // ホスト判定を維持
+    isHost = room.hostUid === myUid;
+    localReady = false;
+    showScreen('lobby-screen');
+    // リスナーは enterLobby で再設定済みなので再購読
+    if (unsubRoom) { unsubRoom(); unsubRoom = null; }
+    unsubRoom = listenRoom(roomCode, snap2 => {
+      if (!snap2.exists()) { backToTitle(); return; }
+      const room2 = snap2.val();
+      if ((room2.status === 'playing' || room2.status === 'ended') && room2.gsJson) {
+        if (!q('game-screen').classList.contains('active')) {
+          logLen = 0; showScreen('game-screen');
+        }
+        onGsReceived(JSON.parse(room2.gsJson));
+      } else {
+        renderLobby(room2);
+      }
+    });
+  } catch(e) {
+    console.error('backToLobby error:', e);
+    backToTitle();
+  }
 }
 
 /* ═══════════════════════════════════════
@@ -1436,6 +1512,7 @@ document.addEventListener('DOMContentLoaded', () => {
   q('start-btn') .addEventListener('click', startGame);
   q('leave-btn') .addEventListener('click', backToTitle);
   q('back-btn')  .addEventListener('click', backToTitle);
+  q('replay-btn').addEventListener('click', backToLobby);
   q('code-disp') .addEventListener('click', () => {
     navigator.clipboard.writeText(roomCode)
       .then(() => toast('コードをコピーしました！'))
