@@ -323,7 +323,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-通常版 β(ver0.1.4)</div>
+    <div class="logo-sub">ゼノ-通常版 β(ver0.1.5)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -795,7 +795,7 @@ function onGsReceived(gs) {
     if (!iAmActor && nseq !== _lastCardAnnounceSeq) {
       _lastCardAnnounceSeq = nseq;
       renderGame(gs);
-      showCardAnnounceAsync(lp.playerName, lp).catch(() => {});
+      showCardAnnounceAsync(lp.playerName, lp, lp.customMsg || null).catch(() => {});
     } else {
       renderGame(gs);
     }
@@ -889,7 +889,7 @@ async function playCard(handIndex) {
   q('cdsc').classList.remove('vis');
   addLog(gs, `${actor.name} が「${card.rank} ${CD[card.rank].name}」を出しました。`, 'act');
   // gsにカード情報をのせてFirebase経由で全員に通知
-  gs.lastPlayedCard = { rank: card.rank, id: card.id, playerName: actor.name, notifySeq: (gs.seq || 0) + 1 };
+  gs.lastPlayedCard = { rank: card.rank, id: card.id, playerName: actor.name, customMsg: null, notifySeq: (gs.seq || 0) + 1 };
   gs.phase = 'card-announce'; // 通知中フェーズ
   await pushGS(gs);
   // 自分は通知を表示してから効果を実行
@@ -994,11 +994,11 @@ async function fx死神(gs, actor) {
       const discMsg = `死神の効果：${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」が捨てられました`;
       addLog(gs, `${actor.name} が ${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」を捨てさせました（死神）。`, 'act');
       // 捨てられたカードを両者に通知（Firebase経由）
-      gs.lastPlayedCard = { rank: disc.rank, id: disc.id, playerName: discMsg, notifySeq: (gs.seq || 0) + 1 };
+      gs.lastPlayedCard = { rank: disc.rank, id: disc.id, playerName: '', customMsg: discMsg, notifySeq: (gs.seq || 0) + 1 };
       gs.phase = 'card-announce';
       await pushGS(gs);
       // 自分には即座に通知表示し、待ってから次の処理
-      await showCardAnnounceAsync(discMsg, disc);
+      await showCardAnnounceAsync('', disc, discMsg);
       gs.phase = 'effect-pending';
       if (disc.rank === 10) { addLog(gs, '英雄が死神で脱落→転生！', 'elim'); elimRebirth(gs, tgt); }
       else if (!tgt.hand.length) eliminate(gs, tgt, true);
@@ -1061,10 +1061,10 @@ async function fx兵士(gs, actor) {
         // 正解カードを両者に通知
         const hitCard = tgt.hand[0];
         const hitMsg = `兵士的中！${tgt.name} の手札は「${actual} ${CD[actual].name}」`;
-        gs.lastPlayedCard = { rank: hitCard.rank, id: hitCard.id, playerName: hitMsg, notifySeq: (gs.seq || 0) + 1 };
+        gs.lastPlayedCard = { rank: hitCard.rank, id: hitCard.id, playerName: '', customMsg: hitMsg, notifySeq: (gs.seq || 0) + 1 };
         gs.phase = 'card-announce';
         await pushGS(gs);
-        await showCardAnnounceAsync(hitMsg, hitCard);
+        await showCardAnnounceAsync('', hitCard, hitMsg);
         gs.phase = 'effect-pending';
         if (actual === 10) elimRebirth(gs, tgt); else eliminate(gs, tgt, true);
       } else {
@@ -1361,13 +1361,17 @@ let _lastAnnouncedSeq = -1;
 let _lastCardAnnounceSeq = -1;
 
 // Promiseベースのカード通知（表示が終わるまで待てる）
-function showCardAnnounceAsync(playerName, card) {
+// msg が null の場合は「playerName が「X カード名」を出しました」を自動生成
+// msg に文字列を渡すとそのままラベルに表示（死神・兵士など）
+function showCardAnnounceAsync(playerName, card, msg = null) {
   return new Promise(resolve => {
     const el    = q('card-announce');
     const label = q('card-announce-label');
     const cCard = q('card-announce-card');
     if (!el) { resolve(); return; }
-    label.textContent = `${playerName} が「${card.rank} ${CD[card.rank].name}」を出しました`;
+    label.textContent = msg !== null
+      ? msg
+      : `${playerName} が「${card.rank} ${CD[card.rank].name}」を出しました`;
     cCard.innerHTML = `<div class="hc c${card.rank}" style="width:100px;height:144px;border-radius:10px;border:1px solid;cursor:default">${cardInner(card)}</div>`;
     el.classList.remove('hide');
     el.classList.add('show');
