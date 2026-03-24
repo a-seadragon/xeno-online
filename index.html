@@ -323,7 +323,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-通常版 β(ver0.1.5)</div>
+    <div class="logo-sub">ゼノ-非公式 β(ver0.1.6)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -1056,16 +1056,19 @@ async function fx兵士(gs, actor) {
       closeModal();
       const actual = tgt.hand[0]?.rank;
       addLog(gs, `${actor.name} が ${tgt.name} の手札を「${guess}」と宣言。`, 'act');
-      if (guess === actual) {
+      // 的中・外れに関わらず宣言カードを両者に通知
+      const guessCard = { rank: guess, id: -1 }; // 仮のカードオブジェクト（表示用）
+      const isHit = guess === actual;
+      const declareMsg = isHit
+        ? `兵士的中！${tgt.name} の手札は「${guess} ${CD[guess].name}」`
+        : `${actor.name} が「${guess} ${CD[guess].name}」と宣言 → 不正解`;
+      gs.lastPlayedCard = { rank: guess, id: -1, playerName: '', customMsg: declareMsg, notifySeq: (gs.seq || 0) + 1 };
+      gs.phase = 'card-announce';
+      await pushGS(gs);
+      await showCardAnnounceAsync('', guessCard, declareMsg);
+      gs.phase = 'effect-pending';
+      if (isHit) {
         addLog(gs, `正解！${tgt.name} の手札は ${actual}${CD[actual].name}。脱落！`, 'elim');
-        // 正解カードを両者に通知
-        const hitCard = tgt.hand[0];
-        const hitMsg = `兵士的中！${tgt.name} の手札は「${actual} ${CD[actual].name}」`;
-        gs.lastPlayedCard = { rank: hitCard.rank, id: hitCard.id, playerName: '', customMsg: hitMsg, notifySeq: (gs.seq || 0) + 1 };
-        gs.phase = 'card-announce';
-        await pushGS(gs);
-        await showCardAnnounceAsync('', hitCard, hitMsg);
-        gs.phase = 'effect-pending';
         if (actual === 10) elimRebirth(gs, tgt); else eliminate(gs, tgt, true);
       } else {
         addLog(gs, '不正解。', 'act');
@@ -1075,13 +1078,23 @@ async function fx兵士(gs, actor) {
   });
 }
 
+// 全プレイヤーの捨て札にある少年（rank=1）の合計枚数を返す
+// 自分が今出した少年はすでに捨て札に加えられているのでそのままカウント
+function countBoyInDiscards(gs) {
+  return gs.players.reduce((sum, p) => {
+    return sum + p.discards.filter(card => card.rank === 1).length;
+  }, 0);
+}
+
 async function fx少年(gs, actor) {
-  if (!gs.boyPlayed) {
-    gs.boyPlayed = true;
-    addLog(gs, '少年1枚目。効果なし（2枚目で公開処刑）。', 'act');
+  // 捨て札の少年が1枚（今出したのが最初）なら効果なし
+  // 2枚以上（誰かが以前出した or 捨てさせられた）なら公開処刑発動
+  const boyCount = countBoyInDiscards(gs);
+  if (boyCount <= 1) {
+    addLog(gs, `少年${boyCount}枚目（場全体）。効果なし（2枚目で公開処刑）。`, 'act');
     await endTurn(gs);
   } else {
-    addLog(gs, '少年2枚目！公開処刑発動！', 'imp');
+    addLog(gs, `少年${boyCount}枚目！公開処刑発動！`, 'imp');
     const targets = alivePlayers(gs).filter(p => p.id !== actor.id && !p.protected);
     if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
     gs.phase = 'effect-pending';
