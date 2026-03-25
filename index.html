@@ -323,7 +323,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式 β(ver0.1.6)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.1.7)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -1106,6 +1106,13 @@ async function fx少年(gs, actor) {
         const disc = tgt.hand.splice(ci, 1)[0];
         tgt.discards.push(disc);
         addLog(gs, `${actor.name} が ${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」を捨てさせました（少年）。`, 'act');
+        // 捨てられたカードを両者に通知
+        const boyDiscMsg = `少年の効果：${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」が捨てられました`;
+        gs.lastPlayedCard = { rank: disc.rank, id: disc.id, playerName: '', customMsg: boyDiscMsg, notifySeq: (gs.seq || 0) + 1 };
+        gs.phase = 'card-announce';
+        await pushGS(gs);
+        await showCardAnnounceAsync('', disc, boyDiscMsg);
+        gs.phase = 'effect-pending';
         if (disc.rank === 10) { addLog(gs, '英雄が少年で脱落→転生！', 'elim'); elimRebirth(gs, tgt); }
         else if (!tgt.hand.length) eliminate(gs, tgt, false);
         if (!checkWin(gs)) await endTurn(gs);
