@@ -323,7 +323,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.1.7)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.1.8)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -680,6 +680,10 @@ function renderLobby(room) {
   const players = room.players
     ? (Array.isArray(room.players) ? room.players : Object.values(room.players))
     : [];
+  // 自分がプレイヤーリストに存在しなければタイトルへ（kickされた場合など）
+  if (players.length > 0 && !players.find(p => p.uid === myUid)) {
+    backToTitle(); return;
+  }
   q('plist').innerHTML = players.map((p, i) => {
     const me = p.uid === myUid, host = i === 0, rdy = !!p.ready;
     return `<div class="pr ${rdy ? 'rdy' : ''}">
@@ -1523,8 +1527,37 @@ function toast(msg, err = false) {
   clearTimeout(window._tt);
   window._tt = setTimeout(() => t.classList.remove('on'), 2800);
 }
+async function leaveRoomCleanup() {
+  // Firebaseのプレイヤーリストから自分を削除してホストに通知
+  if (!roomCode || !myUid) return;
+  try {
+    const snap = await getRoom(roomCode);
+    if (!snap.exists()) return;
+    const room = snap.val();
+    const players = Array.isArray(room.players)
+      ? room.players : Object.values(room.players);
+    const remaining = players.filter(p => p.uid !== myUid);
+    if (remaining.length === 0) {
+      // 自分が最後の一人ならルームごと削除
+      await setField(`rooms/${roomCode}`, null);
+    } else {
+      // pid を振り直して保存
+      const reIndexed = remaining.map((p, i) => ({ ...p, pid: i }));
+      await setField(`rooms/${roomCode}/players`, reIndexed);
+      // ホストが抜けた場合は次の人がホストになる
+      if (room.hostUid === myUid && reIndexed.length > 0) {
+        await setField(`rooms/${roomCode}/hostUid`, reIndexed[0].uid);
+      }
+    }
+  } catch(e) {
+    console.error('leaveRoomCleanup error:', e);
+  }
+}
+
 function backToTitle() {
   if (unsubRoom) { unsubRoom(); unsubRoom = null; }
+  // Firebase からプレイヤーを削除（非同期、完了を待たずに画面遷移）
+  if (roomCode) leaveRoomCleanup();
   logLen = 0; pickedIdx = null; localReady = false;
   processing = false; lastSeq = -1; _lastAnnouncedSeq = -1;
   roomCode = ''; isHost = false; myPid = null;
