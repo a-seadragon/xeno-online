@@ -323,7 +323,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.1.8)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.1.9)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -1554,10 +1554,10 @@ async function leaveRoomCleanup() {
   }
 }
 
-function backToTitle() {
+async function backToTitle() {
   if (unsubRoom) { unsubRoom(); unsubRoom = null; }
-  // Firebase からプレイヤーを削除（非同期、完了を待たずに画面遷移）
-  if (roomCode) leaveRoomCleanup();
+  // roomCode をリセットする前に削除処理を完了させる
+  if (roomCode) await leaveRoomCleanup();
   logLen = 0; pickedIdx = null; localReady = false;
   processing = false; lastSeq = -1; _lastAnnouncedSeq = -1;
   roomCode = ''; isHost = false; myPid = null;
