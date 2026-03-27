@@ -323,7 +323,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.1.9)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.2.0)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -763,7 +763,7 @@ function buildInitialGS(roomPlayers) {
   return {
     players, deck, rebirthCard,
     rebirthUsed: false,
-    currentTurn: 0,
+    currentTurn: Math.floor(Math.random() * players.length),
     phase: 'draw',
     drawnId: null,
     boyPlayed: false,
