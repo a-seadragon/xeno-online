@@ -265,6 +265,8 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 .tg{background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:9px 16px;
   font-family:'Noto Serif JP',serif;font-size:12px;cursor:pointer;border-radius:4px;min-width:86px;transition:all .2s}
 .tg:hover{border-color:var(--gold);color:var(--gold);background:rgba(201,168,76,.08)}
+.tg.prot{border-color:rgba(52,152,219,.4);color:var(--blue-l);background:rgba(52,152,219,.06);cursor:pointer;opacity:.8}
+.tg.prot:hover{border-color:var(--blue-l);background:rgba(52,152,219,.14)}
 .mch{display:flex;gap:9px;justify-content:center;flex-wrap:wrap;margin-bottom:14px}
 .mcc{cursor:pointer;border-radius:6px;border:2px solid transparent!important;
   width:var(--cw);height:var(--ch);transition:all .2s}
@@ -336,7 +338,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.2.4)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.2.5)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -835,6 +837,20 @@ function onGsReceived(gs) {
   if (_revealModalOpen && gs.phase !== 'reveal-cards') {
     _revealModalOpen = false;
     closeModal();
+  }
+
+  // ── 守護発動通知フェーズ ──
+  if (gs.phase === 'guardian-announce' && gs.guardianInfo) {
+    const gi = gs.guardianInfo;
+    const iAmActor = gs.players[gs.currentTurn]?.uid === myUid;
+    if (!iAmActor && gi.notifySeq !== _lastGuardianSeq) {
+      _lastGuardianSeq = gi.notifySeq;
+      renderGame(gs);
+      showGuardianAnnounceAsync(gi.targetName).catch(() => {});
+    } else {
+      renderGame(gs);
+    }
+    return;
   }
 
   // ── カード通知フェーズ：自分以外のプレイヤーに通知を表示 ──
@@ -1473,6 +1489,7 @@ let _lastAnnouncedSeq = -1;
 let _lastCardAnnounceSeq = -1;
 let _lastRevealSeq = -1;
 let _revealModalOpen = false; // revealモーダルが開いているときのみtrue
+let _lastGuardianSeq = -1;
 
 // Promiseベースのカード通知（表示が終わるまで待てる）
 // msg が null の場合は「playerName が「X カード名」を出しました」を自動生成
@@ -1487,6 +1504,24 @@ function showCardAnnounceAsync(playerName, card, msg = null) {
       ? msg
       : `${playerName} が「${card.rank} ${CD[card.rank].name}」を出しました`;
     cCard.innerHTML = `<div class="hc c${card.rank}" style="width:100px;height:144px;border-radius:10px;border:1px solid;cursor:default">${cardInner(card)}</div>`;
+    el.classList.remove('hide');
+    el.classList.add('show');
+    setTimeout(() => {
+      el.classList.add('hide');
+      setTimeout(() => { el.classList.remove('show','hide'); resolve(); }, 400);
+    }, 1600);
+  });
+}
+
+// 守護発動通知（Promiseベース）
+function showGuardianAnnounceAsync(targetName) {
+  return new Promise(resolve => {
+    const el    = q('card-announce');
+    const label = q('card-announce-label');
+    const cCard = q('card-announce-card');
+    if (!el) { resolve(); return; }
+    label.textContent = `🛡 ${targetName} の守護が発動！効果を無効にしました`;
+    cCard.innerHTML = `<div class="hc c4" style="width:100px;height:144px;border-radius:10px;border:1px solid;cursor:default">${cardInner({rank:4})}</div>`;
     el.classList.remove('hide');
     el.classList.add('show');
     setTimeout(() => {
@@ -1636,17 +1671,41 @@ async function drawAndRevealThenPick(gs, actor, tgt, effectTitle, pickTitle, pic
   pickCard(pickTitle, '捨てさせるカードを選んでください。', tgt.hand, pickCb);
 }
 
+// pickTarget: 守護状態のプレイヤーも表示（選択可能）
+// 守護状態の相手を選んだら守護発動通知を出してendTurn
+// targets = 守護でないプレイヤーのリスト（既存のfilterを維持）
+// allTargets = 守護含む全ターゲット（gs から生成）
 function pickTarget(title, text, targets, cb) {
-  showModal(title, text,
-    `<div class="mtgts">${targets.map(t =>
-      `<div class="tg" data-id="${t.id}">${t.name}</div>`
-    ).join('')}</div>`
-  );
+  // 守護状態のプレイヤーも含めた全ターゲットを生成
+  const actor = lastGS.players[lastGS.currentTurn];
+  const allTargets = alivePlayers(lastGS).filter(p => p.id !== actor?.id);
+  const html = allTargets.map(t => {
+    const isProt = t.protected;
+    return `<div class="tg${isProt ? ' prot' : ''}" data-id="${t.id}" data-prot="${isProt ? 1 : 0}">
+      ${isProt ? '🛡 ' : ''}${t.name}${isProt ? ' (守護中)' : ''}
+    </div>`;
+  }).join('');
+  showModal(title, text, `<div class="mtgts">${html}</div>`);
   q('mbd').querySelectorAll('.tg').forEach(el => {
-    el.addEventListener('click', () => {
+    el.addEventListener('click', async () => {
       const tgt = lastGS.players[+el.dataset.id];
+      const isProt = el.dataset.prot === '1';
       closeModal();
-      cb(tgt);
+      if (isProt) {
+        // 守護発動：通知を出してターン終了
+        const gs = deepCopy(lastGS);
+        const act = gs.players[gs.currentTurn];
+        addLog(gs, `${tgt.name} の守護が発動！${act.name} の効果を無効にしました。`, 'act');
+        const notifySeq = (gs.seq || 0) + 1;
+        gs.guardianInfo = { targetName: tgt.name, actorName: act.name, notifySeq };
+        gs.phase = 'guardian-announce';
+        await pushGS(gs);
+        await showGuardianAnnounceAsync(tgt.name);
+        gs.phase = 'effect-pending';
+        await endTurn(gs);
+      } else {
+        cb(tgt);
+      }
     }, { once: true });
   });
 }
@@ -1721,7 +1780,7 @@ async function backToTitle() {
   // roomCode をリセットする前に削除処理を完了させる
   if (roomCode) await leaveRoomCleanup();
   logLen = 0; pickedIdx = null; localReady = false;
-  processing = false; lastSeq = -1; _lastAnnouncedSeq = -1; _lastRevealSeq = -1; _revealModalOpen = false;
+  processing = false; lastSeq = -1; _lastAnnouncedSeq = -1; _lastRevealSeq = -1; _revealModalOpen = false; _lastGuardianSeq = -1;
   roomCode = ''; isHost = false; myPid = null;
   showScreen('title-screen');
 }
