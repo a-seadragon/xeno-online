@@ -323,7 +323,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.2.1)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.2.2)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -800,10 +800,14 @@ function onGsReceived(gs) {
       _lastRevealSeq = ri.revealSeq;
       renderGame(gs);
       showRevealModal(ri);
-    } else if (!iAmActor && !iAmTarget) {
+    } else {
       renderGame(gs);
     }
     return;
+  }
+  // reveal-cards から別フェーズに移行したとき受ける側のモーダルを閉じる
+  if (_lastRevealSeq >= 0 && gs.phase !== 'reveal-cards') {
+    closeModal();
   }
 
   // ── カード通知フェーズ：自分以外のプレイヤーに通知を表示 ──
@@ -1003,6 +1007,21 @@ async function fx死神(gs, actor) {
     tgt.hand.push(gs.deck.shift());
     tgt.hand = shuffle(tgt.hand);
     addLog(gs, `${tgt.name} が引きました（死神効果）。手札シャッフル済み。`, 'act');
+    // 受ける側に「?/?」の見るだけモーダルをFirebase経由で表示
+    const revealSeq = (gs.seq || 0) + 1;
+    gs.revealInfo = {
+      title: `死神 - 疫病 - ${tgt.name} の手札`,
+      desc: `${actor.name} がどちらかを捨てさせます（中身は不明）`,
+      cards: [{rank:'?',id:-1},{rank:'?',id:-2}], // 盲目なので?表示
+      blind: true,
+      targetUid: tgt.uid,
+      actorUid: actor.uid,
+      revealSeq,
+    };
+    gs.phase = 'reveal-cards';
+    await pushGS(gs);
+    renderGame(gs);
+    // 出す側：盲目選択モーダルを表示（従来通り）
     showModal('死神 - 疫病',
       `${tgt.name} の手札（2枚）どちらを捨てさせますか？\n（どちらが何かは不明）`,
       `<div class="mch">
@@ -1485,14 +1504,24 @@ function cardHTML(c, large = false) {
 ═══════════════════════════════════════ */
 // 効果を受ける側に手札を見せる（選択ボタンなし）
 function showRevealModal(ri) {
-  const cardsHTML = ri.cards.map(card =>
-    `<div class="hc c${card.rank}" style="width:var(--cw);height:var(--ch);border-radius:8px;border:1px solid;cursor:default">${cardInner(card)}</div>`
-  ).join('');
+  let cardsHTML;
+  if (ri.blind) {
+    // 死神：盲目なので?/?を表示
+    cardsHTML = `
+      <div class="blnd" style="cursor:default"><div class="ci"><div class="cr" style="color:var(--dim)">?</div><div class="cn" style="color:var(--dim)">左</div></div></div>
+      <div class="blnd" style="cursor:default"><div class="ci"><div class="cr" style="color:var(--dim)">?</div><div class="cn" style="color:var(--dim)">右</div></div></div>`;
+  } else {
+    cardsHTML = ri.cards.map(card =>
+      `<div class="hc c${card.rank}" style="width:var(--cw);height:var(--ch);border-radius:8px;border:1px solid;cursor:default">${cardInner(card)}</div>`
+    ).join('');
+  }
   showModal(
     ri.title,
     ri.desc,
     `<div class="mch" style="justify-content:center">${cardsHTML}</div>
-     <div style="font-size:10px;color:var(--dim);text-align:center;font-family:'Cinzel',serif;letter-spacing:1px">どちらかが捨てられます</div>`
+     <div style="font-size:10px;color:var(--dim);text-align:center;font-family:'Cinzel',serif;letter-spacing:1px">
+       ${ri.blind ? '相手がどちらかを選んでいます...' : 'どちらかが捨てられます'}
+     </div>`
   );
 }
 
