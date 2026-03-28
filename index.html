@@ -323,7 +323,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.2.0)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.2.1)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -790,6 +790,22 @@ function onGsReceived(gs) {
   const cp      = gs.players[gs.currentTurn];
   const isMyTurn = cp && cp.uid === myUid && !cp.eliminated;
 
+  // ── カード公開フェーズ：効果を受ける側に手札を見せる ──
+  if (gs.phase === 'reveal-cards' && gs.revealInfo) {
+    const ri = gs.revealInfo;
+    const iAmActor  = gs.players[gs.currentTurn]?.uid === myUid;
+    const iAmTarget = ri.targetUid === myUid;
+    // 受ける側（ターゲット）だけに「見るだけ」モーダルを表示
+    if (iAmTarget && ri.revealSeq !== _lastRevealSeq) {
+      _lastRevealSeq = ri.revealSeq;
+      renderGame(gs);
+      showRevealModal(ri);
+    } else if (!iAmActor && !iAmTarget) {
+      renderGame(gs);
+    }
+    return;
+  }
+
   // ── カード通知フェーズ：自分以外のプレイヤーに通知を表示 ──
   if (gs.phase === 'card-announce' && gs.lastPlayedCard) {
     const lp = gs.lastPlayedCard;
@@ -926,13 +942,16 @@ async function fx皇帝(gs, actor, fromBoy = false) {
   gs.phase = 'effect-pending';
   await pushGS(gs); renderGame(gs);
   pickTarget('皇帝 - 公開処刑', '相手を指名してください', targets, async tgt => {
-    if (!gs.deck.length) { addLog(gs, '山札なし', 'act'); await endTurn(gs); return; }
-    tgt.hand.push(gs.deck.shift());
-    addLog(gs, `${tgt.name} が山札から引きました（公開処刑）。`, 'act');
-    pickCard(`皇帝 - ${tgt.name} の手札`, '捨てさせるカードを選んでください。', tgt.hand, async ci => {
+    await drawAndRevealThenPick(gs, actor, tgt, '公開処刑', `皇帝 - ${tgt.name} の手札`, async ci => {
       const disc = tgt.hand.splice(ci, 1)[0];
       tgt.discards.push(disc);
       addLog(gs, `${actor.name} が ${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」を捨てさせました。`, 'act');
+      const empMsg = `皇帝の効果：${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」が捨てられました`;
+      gs.lastPlayedCard = { rank: disc.rank, id: disc.id, playerName: '', customMsg: empMsg, notifySeq: (gs.seq || 0) + 1 };
+      gs.phase = 'card-announce';
+      await pushGS(gs);
+      await showCardAnnounceAsync('', disc, empMsg);
+      gs.phase = 'effect-pending';
       if (disc.rank === 10) {
         addLog(gs, '英雄が皇帝に処刑！転生不可。', 'elim');
         eliminate(gs, tgt, false);
@@ -1104,13 +1123,10 @@ async function fx少年(gs, actor) {
     gs.phase = 'effect-pending';
     await pushGS(gs); renderGame(gs);
     pickTarget('少年(革命) - 公開処刑', '相手を指名してください', targets, async tgt => {
-      if (!gs.deck.length) { addLog(gs, '山札なし', 'act'); await endTurn(gs); return; }
-      tgt.hand.push(gs.deck.shift());
-      pickCard(`少年 - ${tgt.name} の手札`, '捨てさせるカードを選んでください（英雄なら転生可）。', tgt.hand, async ci => {
+      await drawAndRevealThenPick(gs, actor, tgt, '少年・公開処刑', `少年 - ${tgt.name} の手札（英雄なら転生可）`, async ci => {
         const disc = tgt.hand.splice(ci, 1)[0];
         tgt.discards.push(disc);
         addLog(gs, `${actor.name} が ${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」を捨てさせました（少年）。`, 'act');
-        // 捨てられたカードを両者に通知
         const boyDiscMsg = `少年の効果：${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」が捨てられました`;
         gs.lastPlayedCard = { rank: disc.rank, id: disc.id, playerName: '', customMsg: boyDiscMsg, notifySeq: (gs.seq || 0) + 1 };
         gs.phase = 'card-announce';
@@ -1383,6 +1399,7 @@ function renderGame(gs) {
 // ════════ 通知ユーティリティ ════════
 let _lastAnnouncedSeq = -1;
 let _lastCardAnnounceSeq = -1;
+let _lastRevealSeq = -1;
 
 // Promiseベースのカード通知（表示が終わるまで待てる）
 // msg が null の場合は「playerName が「X カード名」を出しました」を自動生成
@@ -1466,6 +1483,19 @@ function cardHTML(c, large = false) {
 /* ═══════════════════════════════════════
    モーダル
 ═══════════════════════════════════════ */
+// 効果を受ける側に手札を見せる（選択ボタンなし）
+function showRevealModal(ri) {
+  const cardsHTML = ri.cards.map(card =>
+    `<div class="hc c${card.rank}" style="width:var(--cw);height:var(--ch);border-radius:8px;border:1px solid;cursor:default">${cardInner(card)}</div>`
+  ).join('');
+  showModal(
+    ri.title,
+    ri.desc,
+    `<div class="mch" style="justify-content:center">${cardsHTML}</div>
+     <div style="font-size:10px;color:var(--dim);text-align:center;font-family:'Cinzel',serif;letter-spacing:1px">どちらかが捨てられます</div>`
+  );
+}
+
 function showModal(title, text, body) {
   q('mt').textContent  = title;
   q('mtx').textContent = text;
@@ -1473,6 +1503,31 @@ function showModal(title, text, body) {
   q('mov').classList.add('on');
 }
 function closeModal() { q('mov').classList.remove('on'); }
+
+// 共通処理: tgt に1枚引かせ → 両者に手札公開 → 出す側がどちらか選択
+// emperor/boy は手札公開あり（公開処刑）
+// reaper は手札をシャッフルして盲目選択（公開なし）
+async function drawAndRevealThenPick(gs, actor, tgt, effectTitle, pickTitle, pickCb) {
+  if (!gs.deck.length) { addLog(gs, '山札なし', 'act'); await endTurn(gs); return; }
+  // 1枚引かせる
+  tgt.hand.push(gs.deck.shift());
+  addLog(gs, `${tgt.name} が山札から引きました（${effectTitle}）。`, 'act');
+  // 公開フェーズ：gsにカード情報を載せてFirebase経由で受ける側にも表示
+  const revealSeq = (gs.seq || 0) + 1;
+  gs.revealInfo = {
+    title: `${effectTitle} - ${tgt.name} の手札`,
+    desc: `${actor.name} がどちらかを捨てさせます`,
+    cards: [...tgt.hand], // 現在の手札（元の手札 + 引いたカード）
+    targetUid: tgt.uid,
+    actorUid: actor.uid,
+    revealSeq,
+  };
+  gs.phase = 'reveal-cards';
+  await pushGS(gs);
+  renderGame(gs);
+  // 出す側はpickCardで選択
+  pickCard(pickTitle, '捨てさせるカードを選んでください。', tgt.hand, pickCb);
+}
 
 function pickTarget(title, text, targets, cb) {
   showModal(title, text,
@@ -1559,7 +1614,7 @@ async function backToTitle() {
   // roomCode をリセットする前に削除処理を完了させる
   if (roomCode) await leaveRoomCleanup();
   logLen = 0; pickedIdx = null; localReady = false;
-  processing = false; lastSeq = -1; _lastAnnouncedSeq = -1;
+  processing = false; lastSeq = -1; _lastAnnouncedSeq = -1; _lastRevealSeq = -1;
   roomCode = ''; isHost = false; myPid = null;
   showScreen('title-screen');
 }
