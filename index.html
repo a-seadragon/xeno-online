@@ -338,7 +338,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.2.7)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.2.8)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -839,19 +839,6 @@ function onGsReceived(gs) {
     closeModal();
   }
 
-  // ── 守護発動通知フェーズ ──
-  if (gs.phase === 'guardian-announce' && gs.guardianInfo) {
-    const gi = gs.guardianInfo;
-    const nseq = gi.notifySeq || 0;
-    renderGame(gs);
-    // 全員に表示（重複防止はseqで管理）
-    if (nseq !== _lastGuardianSeq) {
-      _lastGuardianSeq = nseq;
-      showGuardianAnnounceAsync(gi.targetName).catch(() => {});
-    }
-    return;
-  }
-
   // ── カード通知フェーズ：自分以外のプレイヤーに通知を表示 ──
   if (gs.phase === 'card-announce' && gs.lastPlayedCard) {
     const lp = gs.lastPlayedCard;
@@ -861,7 +848,11 @@ function onGsReceived(gs) {
     if (!iAmActor && nseq !== _lastCardAnnounceSeq) {
       _lastCardAnnounceSeq = nseq;
       renderGame(gs);
-      showCardAnnounceAsync(lp.playerName, lp, lp.customMsg || null).catch(() => {});
+      if (lp.isGuardian) {
+        showGuardianAnnounceAsync(lp.guardianTarget).catch(() => {});
+      } else {
+        showCardAnnounceAsync(lp.playerName, lp, lp.customMsg || null).catch(() => {});
+      }
     } else {
       renderGame(gs);
     }
@@ -1691,16 +1682,24 @@ function pickTarget(title, text, targets, cb) {
       const isProt = el.dataset.prot === '1';
       closeModal();
       if (isProt) {
-        // 守護発動：Firebase経由で全員に通知を表示してからターン終了
+        // 守護発動：card-announce と同じ仕組みで両者に通知
         const gs = deepCopy(lastGS);
         const act = gs.players[gs.currentTurn];
         addLog(gs, `${tgt.name} の守護が発動！${act.name} の効果を無効にしました。`, 'act');
-        gs.guardianInfo = { targetName: tgt.name, actorName: act.name, notifySeq: gs.seq + 1 };
-        gs.phase = 'guardian-announce';
-        await pushGS(gs);
-        // pushGS後に自分のリスナーも発火して onGsReceived が通知を表示する
-        // 通知時間（1.6s + 0.4s = 2s）待ってからターン終了
-        await new Promise(r => setTimeout(r, 2100));
+        // lastPlayedCard に守護フラグを立てて card-announce フェーズで通知
+        gs.lastPlayedCard = {
+          rank: 4, id: -99,
+          playerName: act.name,
+          customMsg: null,
+          isGuardian: true,
+          guardianTarget: tgt.name,
+          notifySeq: (gs.seq || 0) + 1,
+        };
+        gs.phase = 'card-announce';
+        // 自分は先に表示
+        const announceP = showGuardianAnnounceAsync(tgt.name);
+        await pushGS(gs);   // 相手のリスナーに届く
+        await announceP;    // 自分の通知が終わるまで待つ
         gs.phase = 'effect-pending';
         await endTurn(gs);
       } else {
