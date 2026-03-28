@@ -336,7 +336,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.2.3)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.2.4)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -831,8 +831,9 @@ function onGsReceived(gs) {
     }
     return;
   }
-  // reveal-cards から別フェーズに移行したとき受ける側のモーダルを閉じる
-  if (_lastRevealSeq >= 0 && gs.phase !== 'reveal-cards') {
+  // reveal-cards から別フェーズに移行したとき、revealモーダルが開いていれば閉じる
+  if (_revealModalOpen && gs.phase !== 'reveal-cards') {
+    _revealModalOpen = false;
     closeModal();
   }
 
@@ -1471,6 +1472,7 @@ function renderGame(gs) {
 let _lastAnnouncedSeq = -1;
 let _lastCardAnnounceSeq = -1;
 let _lastRevealSeq = -1;
+let _revealModalOpen = false; // revealモーダルが開いているときのみtrue
 
 // Promiseベースのカード通知（表示が終わるまで待てる）
 // msg が null の場合は「playerName が「X カード名」を出しました」を自動生成
@@ -1579,6 +1581,7 @@ function cardHTML(c, large = false) {
 ═══════════════════════════════════════ */
 // 効果を受ける側に手札を見せる（選択ボタンなし）
 function showRevealModal(ri) {
+  _revealModalOpen = true;
   let cardsHTML;
   if (ri.blind) {
     // 死神：盲目なので?/?を表示
@@ -1718,7 +1721,7 @@ async function backToTitle() {
   // roomCode をリセットする前に削除処理を完了させる
   if (roomCode) await leaveRoomCleanup();
   logLen = 0; pickedIdx = null; localReady = false;
-  processing = false; lastSeq = -1; _lastAnnouncedSeq = -1; _lastRevealSeq = -1;
+  processing = false; lastSeq = -1; _lastAnnouncedSeq = -1; _lastRevealSeq = -1; _revealModalOpen = false;
   roomCode = ''; isHost = false; myPid = null;
   showScreen('title-screen');
 }
