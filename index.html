@@ -338,7 +338,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.2.5)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.2.6)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -843,8 +843,10 @@ function onGsReceived(gs) {
   if (gs.phase === 'guardian-announce' && gs.guardianInfo) {
     const gi = gs.guardianInfo;
     const iAmActor = gs.players[gs.currentTurn]?.uid === myUid;
-    if (!iAmActor && gi.notifySeq !== _lastGuardianSeq) {
-      _lastGuardianSeq = gi.notifySeq;
+    const nseq = gi.notifySeq || 0;
+    if (!iAmActor && nseq !== _lastGuardianSeq) {
+      // 相手クライアント：Firebase経由で受信して表示
+      _lastGuardianSeq = nseq;
       renderGame(gs);
       showGuardianAnnounceAsync(gi.targetName).catch(() => {});
     } else {
@@ -1692,15 +1694,16 @@ function pickTarget(title, text, targets, cb) {
       const isProt = el.dataset.prot === '1';
       closeModal();
       if (isProt) {
-        // 守護発動：通知を出してターン終了
+        // 守護発動：自分に通知を表示してからFirebaseに書き込み、相手にも通知
         const gs = deepCopy(lastGS);
         const act = gs.players[gs.currentTurn];
         addLog(gs, `${tgt.name} の守護が発動！${act.name} の効果を無効にしました。`, 'act');
-        const notifySeq = (gs.seq || 0) + 1;
-        gs.guardianInfo = { targetName: tgt.name, actorName: act.name, notifySeq };
+        gs.guardianInfo = { targetName: tgt.name, actorName: act.name, notifySeq: (gs.seq || 0) + 2 };
         gs.phase = 'guardian-announce';
-        await pushGS(gs);
-        await showGuardianAnnounceAsync(tgt.name);
+        // 自分の通知を先に表示（pushGSと並行）
+        const announceP = showGuardianAnnounceAsync(tgt.name);
+        await pushGS(gs);          // Firebase書き込み → 相手のリスナーが受信して表示
+        await announceP;           // 自分の通知が終わるまで待つ
         gs.phase = 'effect-pending';
         await endTurn(gs);
       } else {
