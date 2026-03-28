@@ -77,6 +77,19 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 .bhost{background:rgba(201,168,76,.15);border:1px solid var(--gold-d);color:var(--gold)}
 .brdy{background:rgba(39,174,96,.15);border:1px solid var(--green);color:var(--green-l)}
 .bwait{background:rgba(106,100,128,.1);border:1px solid var(--border2);color:var(--dim)}
+/* 勝率 */
+.stats-row{display:flex;gap:5px;align-items:center;margin-left:auto}
+.stat-pill{font-family:'Cinzel',serif;font-size:8px;letter-spacing:1px;padding:2px 7px;border-radius:8px;white-space:nowrap}
+.stat-w{background:rgba(201,168,76,.15);color:var(--gold);border:1px solid rgba(201,168,76,.3)}
+.stat-d{background:rgba(106,100,128,.15);color:var(--dim);border:1px solid var(--border2)}
+.stat-l{background:rgba(192,57,43,.12);color:var(--red-l);border:1px solid rgba(192,57,43,.25)}
+/* 結果画面の成績 */
+.result-stats{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:16px}
+.rstat-card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 16px;text-align:center;min-width:100px}
+.rstat-name{font-family:'Cinzel',serif;font-size:10px;color:var(--dim);letter-spacing:2px;margin-bottom:8px}
+.rstat-nums{display:flex;gap:6px;justify-content:center;margin-bottom:4px}
+.rstat-rate{font-family:'Cinzel Decorative',cursive;font-size:20px;color:var(--gold)}
+.rstat-label{font-family:'Cinzel',serif;font-size:8px;color:var(--dim);letter-spacing:1px}
 /* ── GAME SCREEN ─────────────────────────────────────
    Layout: Header / TurnBar / Opponents(scroll) / CenterBar / MyArea(fixed) / ActionPanel
 ─────────────────────────────────────────────────────*/
@@ -323,7 +336,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.2.2)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.2.3)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -353,6 +366,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="div" style="width:120px;margin:13px auto"></div>
   <div class="slbl">参加プレイヤー</div>
   <div class="plist" id="plist"></div>
+  <div id="stats-area" style="width:100%;max-width:420px;margin-top:6px"></div>
   <div style="margin-top:16px;display:flex;flex-direction:column;gap:9px;width:100%;max-width:270px">
     <button class="btn btn-o" id="ready-btn">準備完了</button>
     <button class="btn btn-g" id="start-btn" style="display:none">ゲーム開始</button>
@@ -424,6 +438,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="rtl" id="rtl">GAME OVER</div>
   <div class="rwn" id="rwn"></div>
   <div class="rhands" id="rhands"></div>
+  <div class="result-stats" id="result-stats"></div>
   <div style="display:flex;flex-direction:column;gap:10px;width:100%;max-width:280px;margin-top:10px">
     <button class="btn btn-g" id="replay-btn">もう一戦！（同じルーム）</button>
     <button class="btn btn-o btn-sm" style="width:auto;align-self:center" id="back-btn">タイトルへ戻る</button>
@@ -684,13 +699,24 @@ function renderLobby(room) {
   if (players.length > 0 && !players.find(p => p.uid === myUid)) {
     backToTitle(); return;
   }
+  const stats = room.stats || {};
   q('plist').innerHTML = players.map((p, i) => {
     const me = p.uid === myUid, host = i === 0, rdy = !!p.ready;
+    const st = stats[p.uid] || { wins: 0, draws: 0, losses: 0 };
+    const total = (st.wins||0) + (st.draws||0) + (st.losses||0);
+    const statsHTML = total > 0
+      ? `<div class="stats-row">
+           <span class="stat-pill stat-w">${st.wins||0}勝</span>
+           <span class="stat-pill stat-d">${st.draws||0}分</span>
+           <span class="stat-pill stat-l">${st.losses||0}敗</span>
+         </div>`
+      : '';
     return `<div class="pr ${rdy ? 'rdy' : ''}">
       <div class="pdot"></div>
       <div class="pnm">${p.name}${me ? ' (あなた)' : ''}</div>
       ${host ? '<span class="pbg bhost">HOST</span>' : ''}
       <span class="pbg ${rdy ? 'brdy' : 'bwait'}">${rdy ? '準備完了' : '待機中'}</span>
+      ${statsHTML}
     </div>`;
   }).join('');
 
@@ -1246,6 +1272,32 @@ async function endGame(gs, reason) {
   addLog(gs, wn.length === 1 ? `${wn[0]} の勝利！` : wn.length > 1 ? `${wn.join('と')} が引き分け` : '引き分け', 'imp');
   await setField(`rooms/${roomCode}/status`, 'ended');
   await saveGS(roomCode, gs);
+  // 勝敗記録を Firebase に書き込む
+  await saveStats(gs);
+}
+
+async function saveStats(gs) {
+  try {
+    const snap = await getRoom(roomCode);
+    if (!snap.exists()) return;
+    const room = snap.val();
+    const prevStats = room.stats || {};
+    const newStats = { ...prevStats };
+    for (const p of gs.players) {
+      const uid = p.uid;
+      const prev = newStats[uid] || { wins: 0, draws: 0, losses: 0, name: p.name };
+      const isWinner = gs.winners.includes(p.id);
+      const isDraw   = gs.winners.length !== 1;
+      if (isDraw) {
+        newStats[uid] = { ...prev, name: p.name, draws: (prev.draws || 0) + 1 };
+      } else if (isWinner) {
+        newStats[uid] = { ...prev, name: p.name, wins: (prev.wins || 0) + 1 };
+      } else {
+        newStats[uid] = { ...prev, name: p.name, losses: (prev.losses || 0) + 1 };
+      }
+    }
+    await setField(`rooms/${roomCode}/stats`, newStats);
+  } catch(e) { console.error('saveStats error:', e); }
 }
 
 function addLog(gs, msg, type = 'act') {
@@ -1481,6 +1533,29 @@ function showResult(gs) {
         <div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap">${cardsHTML}</div>
       </div>`;
     }).join('');
+    // 累計成績を表示（Firebaseから取得）
+    getRoom(roomCode).then(snap => {
+      if (!snap.exists()) return;
+      const stats = snap.val().stats || {};
+      const statsEl = q('result-stats');
+      if (!statsEl) return;
+      const players = gs.players;
+      statsEl.innerHTML = players.map(p => {
+        const st = stats[p.uid] || { wins: 0, draws: 0, losses: 0 };
+        const total = (st.wins||0) + (st.draws||0) + (st.losses||0);
+        const rate = total > 0 ? Math.round((st.wins||0) / total * 100) : 0;
+        return `<div class="rstat-card">
+          <div class="rstat-name">${p.name}</div>
+          <div class="rstat-nums">
+            <span class="stat-pill stat-w">${st.wins||0}勝</span>
+            <span class="stat-pill stat-d">${st.draws||0}分</span>
+            <span class="stat-pill stat-l">${st.losses||0}敗</span>
+          </div>
+          <div class="rstat-rate">${rate}%</div>
+          <div class="rstat-label">勝率 / ${total}戦</div>
+        </div>`;
+      }).join('');
+    }).catch(() => {});
   }, 700);
 }
 
