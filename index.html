@@ -338,7 +338,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.2.8)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.2.9)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -974,7 +974,7 @@ async function resolveEffect(gs, card, actor) {
 }
 
 async function fx皇帝(gs, actor, fromBoy = false) {
-  const targets = alivePlayers(gs).filter(p => p.id !== actor.id && !p.protected);
+  const targets = alivePlayers(gs).filter(p => p.id !== actor.id);
   if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
   gs.phase = 'effect-pending';
   await pushGS(gs); renderGame(gs);
@@ -999,7 +999,7 @@ async function fx皇帝(gs, actor, fromBoy = false) {
 }
 
 async function fx精霊(gs, actor) {
-  const targets = alivePlayers(gs).filter(p => p.id !== actor.id && !p.protected);
+  const targets = alivePlayers(gs).filter(p => p.id !== actor.id);
   if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
   gs.phase = 'effect-pending';
   await pushGS(gs); renderGame(gs);
@@ -1016,7 +1016,7 @@ function fx賢者(gs, actor) {
 }
 
 async function fx貴族(gs, actor) {
-  const targets = alivePlayers(gs).filter(p => p.id !== actor.id && !p.protected);
+  const targets = alivePlayers(gs).filter(p => p.id !== actor.id);
   if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
   gs.phase = 'effect-pending';
   await pushGS(gs); renderGame(gs);
@@ -1031,7 +1031,7 @@ async function fx貴族(gs, actor) {
 }
 
 async function fx死神(gs, actor) {
-  const targets = alivePlayers(gs).filter(p => p.id !== actor.id && !p.protected);
+  const targets = alivePlayers(gs).filter(p => p.id !== actor.id);
   if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
   gs.phase = 'effect-pending';
   await pushGS(gs); renderGame(gs);
@@ -1090,7 +1090,7 @@ function fx乙女(gs, actor) {
 }
 
 async function fx占師(gs, actor) {
-  const targets = alivePlayers(gs).filter(p => p.id !== actor.id && !p.protected);
+  const targets = alivePlayers(gs).filter(p => p.id !== actor.id);
   if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
   gs.phase = 'effect-pending';
   await pushGS(gs); renderGame(gs);
@@ -1107,7 +1107,7 @@ async function fx占師(gs, actor) {
 }
 
 async function fx兵士(gs, actor) {
-  const targets = alivePlayers(gs).filter(p => p.id !== actor.id && !p.protected);
+  const targets = alivePlayers(gs).filter(p => p.id !== actor.id);
   if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
   gs.phase = 'effect-pending';
   await pushGS(gs); renderGame(gs);
@@ -1170,7 +1170,7 @@ async function fx少年(gs, actor) {
     await endTurn(gs);
   } else {
     addLog(gs, `少年${boyCount}枚目！公開処刑発動！`, 'imp');
-    const targets = alivePlayers(gs).filter(p => p.id !== actor.id && !p.protected);
+    const targets = alivePlayers(gs).filter(p => p.id !== actor.id);
     if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
     gs.phase = 'effect-pending';
     await pushGS(gs); renderGame(gs);
