@@ -338,7 +338,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.3.0)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.3.1)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -368,7 +368,6 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="div" style="width:120px;margin:13px auto"></div>
   <div class="slbl">参加プレイヤー</div>
   <div class="plist" id="plist"></div>
-  <div id="stats-area" style="width:100%;max-width:420px;margin-top:6px"></div>
   <div style="margin-top:16px;display:flex;flex-direction:column;gap:9px;width:100%;max-width:270px">
     <button class="btn btn-o" id="ready-btn">準備完了</button>
     <button class="btn btn-g" id="start-btn" style="display:none">ゲーム開始</button>
@@ -523,84 +522,140 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   </div>
 </div>
 <script type="module">
+/**
+ * ================================================================
+ * XENO Online - メインスクリプト
+ * ================================================================
+ * 概要:
+ *   Firebase Realtime Database を使ったリアルタイム対戦カードゲーム。
+ *   ゲーム状態は JSON.stringify して "gsJson" フィールドに文字列で保存し、
+ *   Firebase の配列→オブジェクト変換問題を完全回避している。
+ *
+ * アーキテクチャ:
+ *   - 手番プレイヤーのクライアントがゲーム処理（ドロー・効果）を実行
+ *   - 処理結果を Firebase に書き込むと他プレイヤーのリスナーが発火
+ *   - onGsReceived() がすべての状態変化を受け取り UI を更新する
+ *
+ * フロー:
+ *   ① Firebase リスナー発火 → onGsReceived(gs)
+ *   ② phase === 'draw' かつ自分のターン → execDraw() でカードを引く
+ *   ③ phase === 'choose' → renderGame() でカード選択UIを表示
+ *   ④ カードを選択・確定 → playCard() → resolveEffect() で効果処理
+ *   ⑤ 効果処理完了 → endTurn() → advanceTurn() → phase='draw' を Firebase に書き込み
+ *   ⑥ 次のプレイヤーのリスナーが発火して② に戻る
+ * ================================================================
+ */
+
+// ── Firebase SDK インポート ──
 import { initializeApp }  from "https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js";
-import { getDatabase, ref, set, get, onValue, remove }
+import { getDatabase, ref, set, get, onValue }
                           from "https://www.gstatic.com/firebasejs/12.11.0/firebase-database.js";
 import { getAuth, signInAnonymously }
                           from "https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js";
 
-/* ═══════════════════════════════════════
-   Firebase設定
-═══════════════════════════════════════ */
+// ================================================================
+// Firebase 設定
+// ================================================================
 const FC = {
-  apiKey:"AIzaSyA6Dk_MvoVYmQ7zcoRu8Stq36zi3APTods",
-  authDomain:"xeno-st.firebaseapp.com",
-  databaseURL:"https://xeno-st-default-rtdb.firebaseio.com",
-  projectId:"xeno-st",
-  storageBucket:"xeno-st.firebasestorage.app",
+  apiKey:           "AIzaSyA6Dk_MvoVYmQ7zcoRu8Stq36zi3APTods",
+  authDomain:       "xeno-st.firebaseapp.com",
+  databaseURL:      "https://xeno-st-default-rtdb.firebaseio.com",
+  projectId:        "xeno-st",
+  storageBucket:    "xeno-st.firebasestorage.app",
   messagingSenderId:"1025681806500",
-  appId:"1:1025681806500:web:8521ed8c04aaae50954231",
-  measurementId:"G-94XZFB62WE"
+  appId:            "1:1025681806500:web:8521ed8c04aaae50954231",
+  measurementId:    "G-94XZFB62WE"
 };
 
-/* ═══════════════════════════════════════
-   DB ラッパー
-   ゲーム状態は JSON.stringify して1フィールドに保存
-   → Firebaseの配列→オブジェクト変換問題を完全回避
-═══════════════════════════════════════ */
-let db, auth, myUid;
+// ================================================================
+// Firebase DB ラッパー関数
+// 概要: Firebase Realtime DB への読み書きを薄くラップする。
+// 詳細: ゲーム状態は JSON.stringify した文字列として "gsJson" フィールドに
+//       1つの文字列として保存する。これにより Firebase が JS 配列を
+//       オブジェクト({0:..., 1:...})に変換してしまう問題を回避している。
+// ================================================================
+let db, myUid;
 
-// ゲーム状態をJSONシリアライズして保存
-const saveGS = (roomCode, gs) =>
-  set(ref(db, `rooms/${roomCode}/gsJson`), JSON.stringify(gs));
+/** ゲーム状態オブジェクトを JSON 文字列として gsJson フィールドに保存 */
+const saveGS    = (rc, gs) => set(ref(db, `rooms/${rc}/gsJson`), JSON.stringify(gs));
+/** ルーム全体（ロビー情報含む）を一括保存 */
+const saveRoom  = (rc, d)  => set(ref(db, `rooms/${rc}`), d);
+/** ルーム全体を一度取得（Promise） */
+const getRoom   = rc       => get(ref(db, `rooms/${rc}`));
+/** 指定パスの単一フィールドを上書き */
+const setField  = (p, v)   => set(ref(db, p), v);
+/** 指定ルームの変更をリアルタイム監視。返り値は unsubscribe 関数 */
+const listenRoom= (rc, cb) => onValue(ref(db, `rooms/${rc}`), cb);
 
-// ルーム全体をオブジェクトで保存（ロビー情報）
-const saveRoom = (roomCode, data) =>
-  set(ref(db, `rooms/${roomCode}`), data);
-
-const getRoom = (roomCode) =>
-  get(ref(db, `rooms/${roomCode}`));
-
-const setField = (path, val) =>
-  set(ref(db, path), val);
-
-const listenRoom = (roomCode, cb) =>
-  onValue(ref(db, `rooms/${roomCode}`), cb);
-
-/* ═══════════════════════════════════════
-   クライアント状態
-═══════════════════════════════════════ */
-let myPid = null, myName = '', roomCode = '', isHost = false, localReady = false;
+// ================================================================
+// クライアント状態変数
+// 概要: このブラウザセッション固有の状態。Firebase には保存しない。
+// 詳細:
+//   - myUid      : Firebase 匿名ログインで発行される一意UID
+//   - myPid      : ルーム内のプレイヤーインデックス (0〜3)
+//   - roomCode   : 現在参加中のルームコード (6文字英数字)
+//   - isHost     : 自分がホストかどうか（ゲーム開始ボタンの表示に使用）
+//   - localReady : 自分の準備完了状態（Firebase 書き込み前の即時 UI 更新用）
+//   - unsubRoom  : Firebase リスナーの解除関数
+//   - lastGS     : 最後に受信したゲーム状態のキャッシュ
+//   - pickedIdx  : 自分の手札で選択中のカードインデックス
+//   - logLen     : ログの既描画行数（新しい行だけ追記するために使用）
+//   - processing : ドロー処理の二重実行防止フラグ
+//   - lastSeq    : 最後に処理した gs.seq（同一状態の再処理防止）
+// ================================================================
+let myPid = null, roomCode = '', isHost = false, localReady = false;
 let unsubRoom = null, lastGS = null, pickedIdx = null, logLen = 0;
 let processing = false, lastSeq = -1;
 
-/* ═══════════════════════════════════════
-   カードデータ
-═══════════════════════════════════════ */
+// ================================================================
+// 通知系シーケンス管理変数
+// 概要: 各通知の重複表示を防ぐためのシーケンス番号管理。
+// 詳細: Firebase リスナーは同じ状態で複数回発火することがあるため、
+//       notifySeq を比較して「既に表示済み」かどうかを判定する。
+//   - _lastAnnouncedSeq  : 「あなたのターンです」通知の既処理 seq
+//   - _lastCardAnnounceSeq: カード出し通知の既処理 seq
+//   - _lastRevealSeq     : カード公開モーダルの既処理 seq
+//   - _revealModalOpen   : 公開モーダルが現在開いているか（自動クローズ用）
+// ================================================================
+let _lastAnnouncedSeq   = -1;
+let _lastCardAnnounceSeq= -1;
+let _lastRevealSeq      = -1;
+let _revealModalOpen    = false;
+
+// ================================================================
+// カードデータ定義
+// 概要: 10種類のカードの名前・効果テキスト・枚数・説明を定義する。
+// 詳細: キーはカードのランク（数字）。cnt は18枚デッキ中の枚数。
+//       desc はカード選択時のツールチップに表示される効果説明。
+// ================================================================
 const CD = {
   10:{name:'英雄', eff:'潜伏・転生', cnt:1, desc:'場に出せない。皇帝以外で脱落→転生札で復活。'},
-  9: {name:'皇帝', eff:'公開処刑',   cnt:1, desc:'相手に1枚引かせ手札2枚公開、1枚を指定して捨てさせる。英雄→転生不可。'},
-  8: {name:'精霊', eff:'交換',       cnt:2, desc:'相手の手札と自分の手札を交換する。'},
-  7: {name:'賢者', eff:'選択',       cnt:2, desc:'次の手番で山札から3枚引き1枚を選ぶ。残り2枚は山札へ戻す。'},
-  6: {name:'貴族', eff:'対決',       cnt:2, desc:'相手と手札を見せ合い数字の小さい方が脱落。同数は相打ち。'},
-  5: {name:'死神', eff:'疫病',       cnt:2, desc:'相手に1枚引かせシャッフル後に盲目で1枚捨てさせる。'},
-  4: {name:'乙女', eff:'守護',       cnt:2, desc:'次の自分の手番まで自分への効果を無効にする。'},
-  3: {name:'占師', eff:'透視',       cnt:2, desc:'相手の手札を自分だけが確認できる。'},
-  2: {name:'兵士', eff:'捜査',       cnt:2, desc:'相手の手札ランクを言い当てると相手が脱落する。'},
-  1: {name:'少年', eff:'革命',       cnt:2, desc:'1枚目は効果なし。2枚目で「公開処刑」発動（英雄は転生可）。'},
+   9:{name:'皇帝', eff:'公開処刑',   cnt:1, desc:'相手に1枚引かせ手札2枚公開、1枚を指定して捨てさせる。英雄→転生不可。'},
+   8:{name:'精霊', eff:'交換',       cnt:2, desc:'相手の手札と自分の手札を交換する。'},
+   7:{name:'賢者', eff:'選択',       cnt:2, desc:'次の手番で山札から3枚引き1枚を選ぶ。残り2枚は山札へ戻す。'},
+   6:{name:'貴族', eff:'対決',       cnt:2, desc:'相手と手札を見せ合い数字の小さい方が脱落。同数は相打ち。'},
+   5:{name:'死神', eff:'疫病',       cnt:2, desc:'相手に1枚引かせシャッフル後に盲目で1枚捨てさせる。'},
+   4:{name:'乙女', eff:'守護',       cnt:2, desc:'次の自分の手番まで自分への効果を無効にする。'},
+   3:{name:'占師', eff:'透視',       cnt:2, desc:'相手の手札を自分だけが確認できる。'},
+   2:{name:'兵士', eff:'捜査',       cnt:2, desc:'相手の手札ランクを言い当てると相手が脱落する。'},
+   1:{name:'少年', eff:'革命',       cnt:2, desc:'1枚目は効果なし。2枚目で「公開処刑」発動（英雄は転生可）。'},
 };
 
-/* ═══════════════════════════════════════
-   Firebase 初期化
-═══════════════════════════════════════ */
+// ================================================================
+// Firebase 初期化
+// 概要: Firebase SDK を初期化し、匿名認証でログインする。
+// 詳細: signInAnonymously() で取得した UID をクライアント識別子として使用。
+//       成功すると接続バッジを緑に更新し、失敗するとエラーを表示して
+//       バッジクリックで再試行できるようにする。
+// ================================================================
 async function init() {
   try {
-    const app = initializeApp(FC);
-    db   = getDatabase(app);
-    auth = getAuth(app);
+    const app  = initializeApp(FC);
+    db         = getDatabase(app);
+    const auth = getAuth(app);
     const cred = await signInAnonymously(auth);
-    myUid = cred.user.uid;
-    console.log('Firebase OK uid:', myUid);
+    myUid      = cred.user.uid;
+    console.log('Firebase ready, uid:', myUid);
     setConnBadge(true);
   } catch(e) {
     console.error('Firebase init error:', e);
@@ -608,39 +663,57 @@ async function init() {
   }
 }
 
+/**
+ * 概要: 接続状態バッジの表示を更新する。
+ * 詳細: ok=true なら緑「接続済み」、false なら赤「接続エラー」を表示。
+ *       エラー時はバッジをクリックで init() を再呼び出しできる。
+ * @param {boolean} ok    - 接続成功かどうか
+ * @param {string}  [msg] - エラーメッセージ（失敗時のみ）
+ */
 function setConnBadge(ok, msg) {
   const el = q('conn-status');
-  el.className = 'cbadge ' + (ok ? 'cok' : 'cerr');
+  el.className   = 'cbadge ' + (ok ? 'cok' : 'cerr');
   el.textContent = ok ? '接続済み' : '接続エラー（クリックで再試行）';
-  el.style.cursor = ok ? 'default' : 'pointer';
-  el.onclick = ok ? null : () => init();
+  el.style.cursor= ok ? 'default' : 'pointer';
+  el.onclick     = ok ? null : () => init();
   if (!ok && msg) toast('接続エラー: ' + msg.slice(0, 60), true);
 }
 
-/* ═══════════════════════════════════════
-   ルーム管理
-═══════════════════════════════════════ */
+// ================================================================
+// ルーム管理
+// ================================================================
+
+/**
+ * 概要: ランダムな6文字のルームコードを生成する。
+ * 詳細: 紛らわしい文字(I,O,0,1)を除いた英数字から6文字を選択。
+ *       生成したコードを Firebase のルームキーとして使用する。
+ * @returns {string} 6文字の英数字コード
+ */
 function genCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   return Array.from({length:6}, () => chars[Math.floor(Math.random()*chars.length)]).join('');
 }
 
+/**
+ * 概要: 新しいルームを Firebase に作成してロビーへ遷移する。
+ * 詳細: ホストとして myPid=0、isHost=true を設定し、
+ *       players 配列の先頭に自分を追加してルームデータを書き込む。
+ *       作成後は enterLobby() でリスナーを設定してロビー画面に遷移する。
+ */
 async function createRoom() {
   try {
     if (!myUid) { toast('Firebase接続中。少し待ってから再試行してください', true); return; }
     const name = q('host-name').value.trim() || 'ホスト';
-    myName = name; isHost = true; myPid = 0;
-    roomCode = genCode();
+    isHost = true; myPid = 0; roomCode = genCode();
     toast('部屋を作成中...');
-    const roomData = {
-      code: roomCode,
-      hostUid: myUid,
-      status: 'lobby',
-      players: [{ uid: myUid, name, ready: false, pid: 0 }],
-      gsJson: null,
+    await saveRoom(roomCode, {
+      code:     roomCode,
+      hostUid:  myUid,
+      status:   'lobby',
+      players:  [{ uid:myUid, name, ready:false, pid:0 }],
+      gsJson:   null,
       createdAt: Date.now()
-    };
-    await saveRoom(roomCode, roomData);
+    });
     enterLobby();
   } catch(e) {
     console.error('createRoom:', e);
@@ -648,6 +721,12 @@ async function createRoom() {
   }
 }
 
+/**
+ * 概要: 既存ルームにゲストとして参加してロビーへ遷移する。
+ * 詳細: 入力されたコードで Firebase からルームを取得し、
+ *       ステータス・満員チェック後に players 配列に自分を追加して書き込む。
+ *       myPid は既存プレイヤー数（末尾に追加するため）。
+ */
 async function joinRoom() {
   try {
     if (!myUid) { toast('Firebase接続中。少し待ってから再試行してください', true); return; }
@@ -656,14 +735,13 @@ async function joinRoom() {
     if (code.length < 4) { toast('ルームコードを入力してください', true); return; }
     toast('参加中...');
     const snap = await getRoom(code);
-    if (!snap.exists()) { toast('部屋が見つかりません', true); return; }
+    if (!snap.exists())          { toast('部屋が見つかりません', true); return; }
     const room = snap.val();
     if (room.status !== 'lobby') { toast('ゲームはすでに始まっています', true); return; }
-    const players = room.players ? Object.values(room.players) : [];
-    if (players.length >= 4) { toast('部屋が満員です', true); return; }
-    myName = name; isHost = false; roomCode = code;
-    myPid = players.length;
-    players.push({ uid: myUid, name, ready: false, pid: myPid });
+    const players = Array.isArray(room.players) ? room.players : Object.values(room.players);
+    if (players.length >= 4)     { toast('部屋が満員です', true); return; }
+    isHost = false; roomCode = code; myPid = players.length;
+    players.push({ uid:myUid, name, ready:false, pid:myPid });
     await setField(`rooms/${code}/players`, players);
     enterLobby();
   } catch(e) {
@@ -672,6 +750,13 @@ async function joinRoom() {
   }
 }
 
+/**
+ * 概要: ロビー画面へ遷移し、Firebase リスナーを設定する。
+ * 詳細: listenRoom() で rooms/{roomCode} 全体を監視する。
+ *       - status が 'playing'/'ended' かつ gsJson あり → ゲーム画面へ遷移して onGsReceived() を呼ぶ
+ *       - それ以外 → renderLobby() でロビー画面を更新する
+ *       既存のリスナーがある場合は先に解除してから再設定する。
+ */
 function enterLobby() {
   q('code-disp').textContent = roomCode;
   showScreen('lobby-screen');
@@ -685,32 +770,41 @@ function enterLobby() {
         showScreen('game-screen');
       }
       // gsJson は文字列 → JSON.parse で完全な配列構造を復元
-      const gs = JSON.parse(room.gsJson);
-      onGsReceived(gs);
+      onGsReceived(JSON.parse(room.gsJson));
     } else {
       renderLobby(room);
     }
   });
 }
 
+/**
+ * 概要: ロビー画面のプレイヤー一覧と操作ボタンを更新する。
+ * 詳細:
+ *   - room.hostUid と myUid を毎回比較して isHost を同期する
+ *     （ホスト退出後のホスト交代に対応するため）
+ *   - isHost=true の場合: 「ゲーム開始」ボタンを表示し、
+ *     全ゲストが準備完了かつ2人以上いる場合のみ有効化する
+ *   - isHost=false の場合: 「準備完了」ボタンを表示する
+ *   - 自分がプレイヤーリストにいない場合はタイトルへ戻る（退出処理済み）
+ * @param {Object} room - Firebase から取得したルームデータ
+ */
 function renderLobby(room) {
   const players = room.players
     ? (Array.isArray(room.players) ? room.players : Object.values(room.players))
     : [];
-  // 自分がプレイヤーリストに存在しなければタイトルへ（kickされた場合など）
+  // 自分がプレイヤーリストに存在しなければタイトルへ
   if (players.length > 0 && !players.find(p => p.uid === myUid)) {
     backToTitle(); return;
   }
-  // hostUid をFirebaseから毎回確認してisHostを同期する
-  // （ホスト交代が起きたときにクライアント変数を更新）
-  if (room.hostUid) {
-    isHost = (room.hostUid === myUid);
-  }
+  // hostUid を Firebase から毎回確認して isHost を同期する
+  // （ホストが退出してホスト交代が起きた場合に対応）
+  if (room.hostUid) isHost = (room.hostUid === myUid);
+
   const stats = room.stats || {};
   q('plist').innerHTML = players.map((p, i) => {
-    const me = p.uid === myUid, host = i === 0, rdy = !!p.ready;
-    const st = stats[p.uid] || { wins: 0, draws: 0, losses: 0 };
-    const total = (st.wins||0) + (st.draws||0) + (st.losses||0);
+    const me   = p.uid === myUid, host = i === 0, rdy = !!p.ready;
+    const st   = stats[p.uid] || { wins:0, draws:0, losses:0 };
+    const total= (st.wins||0) + (st.draws||0) + (st.losses||0);
     const statsHTML = total > 0
       ? `<div class="stats-row">
            <span class="stat-pill stat-w">${st.wins||0}勝</span>
@@ -731,30 +825,43 @@ function renderLobby(room) {
   if (isHost) {
     rb.style.display = 'none';
     sb.style.display = '';
+    // ゲスト全員が ready かつ 2人以上の場合のみ開始ボタンを有効化
     const nonHost = players.slice(1);
     sb.disabled = !(nonHost.length > 0 && nonHost.every(p => p.ready) && players.length >= 2);
   } else {
     rb.style.display = '';
     sb.style.display = 'none';
-    rb.textContent = localReady ? '準備中止' : '準備完了';
-    rb.className = `btn ${localReady ? 'btn-g' : 'btn-o'}`;
+    rb.textContent   = localReady ? '準備中止' : '準備完了';
+    rb.className     = `btn ${localReady ? 'btn-g' : 'btn-o'}`;
   }
 }
 
+/**
+ * 概要: 自分の準備状態をトグルして Firebase に書き込む。
+ * 詳細: localReady を反転させ、
+ *       rooms/{roomCode}/players/{myPid}/ready に書き込む。
+ *       ホストの renderLobby() がリスナー経由で変化を受け取り
+ *       ゲーム開始ボタンの有効/無効を切り替える。
+ */
 async function toggleReady() {
   localReady = !localReady;
   await setField(`rooms/${roomCode}/players/${myPid}/ready`, localReady);
 }
 
+/**
+ * 概要: ゲームを開始する（ホストのみ実行可）。
+ * 詳細: Firebase からルームの最新プレイヤーリストを取得してから
+ *       buildInitialGS() でゲーム初期状態を生成し、
+ *       status='playing' と gsJson を書き込む。
+ *       全プレイヤーのリスナーが発火してゲーム画面へ遷移する。
+ */
 async function startGame() {
   try {
-    const snap = await getRoom(roomCode);
-    const room = snap.val();
+    const snap    = await getRoom(roomCode);
+    const room    = snap.val();
     const players = Array.isArray(room.players)
-      ? room.players
-      : Object.values(room.players);
+      ? room.players : Object.values(room.players);
     const gs = buildInitialGS(players);
-    // statusとgsJsonを同時に書き込み
     await setField(`rooms/${roomCode}/status`, 'playing');
     await saveGS(roomCode, gs);
   } catch(e) {
@@ -763,9 +870,16 @@ async function startGame() {
   }
 }
 
-/* ═══════════════════════════════════════
-   ゲーム状態構築
-═══════════════════════════════════════ */
+// ================================================================
+// ゲーム状態構築
+// ================================================================
+
+/**
+ * 概要: カードをシャッフルして返す（Fisher-Yates アルゴリズム）。
+ * 詳細: 配列を破壊しないようコピーしてからシャッフルする。
+ * @param {Array} arr - シャッフル対象の配列
+ * @returns {Array} シャッフル済みの新しい配列
+ */
 function shuffle(arr) {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -775,6 +889,12 @@ function shuffle(arr) {
   return a;
 }
 
+/**
+ * 概要: カードデータ定義(CD)から18枚のデッキを生成しシャッフルする。
+ * 詳細: 各ランクを cnt 枚分生成し、id にデッキ内の連番を付与する。
+ *       id は手札・捨て札でカードを一意識別するために使用する。
+ * @returns {Array<{rank:number, id:number}>} シャッフル済みデッキ
+ */
 function buildDeck() {
   const deck = [];
   for (const r in CD) {
@@ -784,6 +904,18 @@ function buildDeck() {
   return shuffle(deck);
 }
 
+/**
+ * 概要: ゲーム開始時の初期状態オブジェクトを生成する。
+ * 詳細:
+ *   - デッキを生成してシャッフルし、各プレイヤーに1枚ずつ配る
+ *   - デッキの次の1枚を「転生札」として確保する
+ *     （英雄が皇帝以外に脱落させられた際の復活カード）
+ *   - currentTurn はランダムに決定して先手プレイヤーを選ぶ
+ *   - seq はFirebaseへの書き込みごとに+1されるシーケンス番号。
+ *     リスナーの二重処理防止に使用する。
+ * @param {Array} roomPlayers - ロビーのプレイヤー配列 [{uid, name, ...}]
+ * @returns {Object} ゲーム状態オブジェクト
+ */
 function buildInitialGS(roomPlayers) {
   const deck = buildDeck();
   const players = roomPlayers.map((rp, i) => ({
@@ -795,22 +927,33 @@ function buildInitialGS(roomPlayers) {
   const rebirthCard = deck.shift();
   return {
     players, deck, rebirthCard,
-    rebirthUsed: false,
-    currentTurn: Math.floor(Math.random() * players.length),
-    phase: 'draw',
-    drawnId: null,
-    boyPlayed: false,
-    log: [],
-    gameOver: false,
-    winners: [],
-    seq: 0
+    rebirthUsed:  false,
+    currentTurn:  Math.floor(Math.random() * players.length), // 先手をランダムに決定
+    phase:        'draw',       // draw | choose | effect-pending | card-announce | reveal-cards
+    drawnId:      null,         // 今引いたカードのID（UI でドット表示に使用）
+    boyPlayed:    false,        // 少年が1枚以上捨て札にあるかのフラグ（非推奨。countBoyInDiscards()で代替）
+    lastPlayedCard: null,       // カード通知用の最後に出されたカード情報
+    revealInfo:   null,         // 公開モーダル用のカード情報（皇帝・少年効果時）
+    log:          [],           // ゲームログ配列 [{msg, type}]
+    gameOver:     false,
+    winners:      [],           // 勝者のプレイヤーID配列
+    seq:          0             // 書き込みごとに+1するシーケンス番号
   };
 }
 
-/* ═══════════════════════════════════════
-   リアルタイム受信ハンドラ
-   JSON.parse済みの gs を受け取る（型は完全に保持）
-═══════════════════════════════════════ */
+// ================================================================
+// リアルタイム受信ハンドラ
+// 概要: Firebase リスナーが発火したときの中心的な処理関数。
+// 詳細: gs.phase の値によって処理を振り分ける。
+//   - reveal-cards  : 皇帝/少年効果でターゲットに手札を見せるモーダルを表示
+//   - card-announce : カードが出された・守護発動などの通知を全員に表示
+//   - draw          : 自分のターンなら execDraw() でドロー処理を開始
+//   - それ以外      : renderGame() で画面を更新するだけ
+//
+//   二重処理防止の仕組み:
+//   - processing フラグ: execDraw が進行中は再エントリを防ぐ
+//   - lastSeq         : 同じ seq の gs を2回処理しない
+// ================================================================
 function onGsReceived(gs) {
   lastGS = gs;
 
@@ -820,55 +963,55 @@ function onGsReceived(gs) {
     return;
   }
 
-  const cp      = gs.players[gs.currentTurn];
+  const cp       = gs.players[gs.currentTurn];
   const isMyTurn = cp && cp.uid === myUid && !cp.eliminated;
 
-  // ── カード公開フェーズ：効果を受ける側に手札を見せる ──
+  // ── reveal-cards フェーズ: 皇帝/少年効果でターゲットに手札公開モーダルを表示 ──
+  // 出す側は pickCard が既に表示済みのため、ターゲットのみモーダルを表示する
   if (gs.phase === 'reveal-cards' && gs.revealInfo) {
-    const ri = gs.revealInfo;
-    const iAmActor  = gs.players[gs.currentTurn]?.uid === myUid;
+    const ri        = gs.revealInfo;
     const iAmTarget = ri.targetUid === myUid;
-    // 受ける側（ターゲット）だけに「見るだけ」モーダルを表示
+    renderGame(gs);
+    // ターゲットかつ未表示の場合のみ表示（revealSeq で重複防止）
     if (iAmTarget && ri.revealSeq !== _lastRevealSeq) {
       _lastRevealSeq = ri.revealSeq;
-      renderGame(gs);
       showRevealModal(ri);
-    } else {
-      renderGame(gs);
     }
     return;
   }
-  // reveal-cards から別フェーズに移行したとき、revealモーダルが開いていれば閉じる
+
+  // reveal-cards から別フェーズに移行したとき、表示中の公開モーダルを閉じる
   if (_revealModalOpen && gs.phase !== 'reveal-cards') {
     _revealModalOpen = false;
     closeModal();
   }
 
-  // ── カード通知フェーズ：自分以外のプレイヤーに通知を表示 ──
+  // ── card-announce フェーズ: カード出し通知または守護発動通知を表示 ──
+  // 出す側は playCard()/pickTarget() 内で既に表示済みなのでスキップ
   if (gs.phase === 'card-announce' && gs.lastPlayedCard) {
-    const lp = gs.lastPlayedCard;
+    const lp   = gs.lastPlayedCard;
     const nseq = lp.notifySeq || 0;
-    // 自分が出したカードは既にshowCardAnnounceAsyncで表示済み → スキップ
-    const iAmActor = gs.players[gs.currentTurn]?.uid === myUid;
-    if (!iAmActor && nseq !== _lastCardAnnounceSeq) {
+    renderGame(gs);
+    if (!isMyTurn && nseq !== _lastCardAnnounceSeq) {
       _lastCardAnnounceSeq = nseq;
-      renderGame(gs);
       if (lp.isGuardian) {
+        // 守護発動通知
         showGuardianAnnounceAsync(lp.guardianTarget).catch(() => {});
       } else {
+        // 通常のカード出し通知
         showCardAnnounceAsync(lp.playerName, lp, lp.customMsg || null).catch(() => {});
       }
-    } else {
-      renderGame(gs);
     }
     return;
   }
 
-  // ── drawフェーズ：ターン通知を表示してからドロー ──
+  // ── draw フェーズ: 自分のターンならドロー処理を開始 ──
+  // processing と lastSeq の二重チェックで Firebase の複数回発火に対応
   if (gs.phase === 'draw' && isMyTurn && !processing && gs.seq !== lastSeq) {
-    lastSeq = gs.seq;
+    lastSeq    = gs.seq;
     processing = true;
-    renderGame(gs); // まず画面更新
+    renderGame(gs);
+    // ターン通知を表示してからドロー処理を実行
     showTurnAnnounceAsync()
       .then(() => execDraw(deepCopy(gs)))
       .catch(e => console.error('execDraw error:', e))
@@ -879,25 +1022,38 @@ function onGsReceived(gs) {
   renderGame(gs);
 }
 
-/* ═══════════════════════════════════════
-   Firebase書き込み（JSON文字列として保存）
-═══════════════════════════════════════ */
+// ================================================================
+// Firebase 書き込み（ゲーム状態）
+// 概要: ゲーム状態を Firebase に書き込む。
+// 詳細: 書き込みのたびに gs.seq を+1する。
+//       seq の変化がリスナーの二重処理防止フラグとして機能する。
+//       全プレイヤーのリスナーがこの書き込みで発火し onGsReceived() が呼ばれる。
+// ================================================================
 async function pushGS(gs) {
   gs.seq = (gs.seq || 0) + 1;
   await saveGS(roomCode, gs);
 }
 
-/* ═══════════════════════════════════════
-   ターンエンジン
-═══════════════════════════════════════ */
+// ================================================================
+// ターンエンジン
+// ================================================================
+
+/**
+ * 概要: 自分のターン開始時にカードを引く処理を実行する。
+ * 詳細:
+ *   - sageMode（賢者の効果）の場合: 山札から最大3枚引き、選択モーダルを表示する
+ *   - 通常の場合: 山札から1枚引いて手札に加え、phase を 'choose' にして Firebase に書き込む
+ *   - 山札が0枚の場合: 即座にゲーム終了（山札切れ）
+ * @param {Object} gs - deepCopy 済みのゲーム状態
+ */
 async function execDraw(gs) {
   const p = gs.players[gs.currentTurn];
 
-  // 賢者モード
   if (p.sageMode) {
-    p.sageMode = false;
+    // 賢者モード: 最大3枚引いて選択させる
+    p.sageMode  = false;
     const avail = Math.min(3, gs.deck.length);
-    if (avail === 0) { await endGame(gs, 'deck'); return; }
+    if (!avail) { await endGame(gs, 'deck'); return; }
     const drawn = gs.deck.splice(0, avail);
     addLog(gs, `${p.name} は賢者の効果で${avail}枚引きます。`, 'act');
     gs.phase = 'choose';
@@ -907,10 +1063,11 @@ async function execDraw(gs) {
     return;
   }
 
-  // 通常ドロー
-  if (gs.deck.length === 0) { await endGame(gs, 'deck'); return; }
-  const card = gs.deck.shift();
-  gs.drawnId = card.id;
+  if (!gs.deck.length) { await endGame(gs, 'deck'); return; }
+
+  // 通常ドロー: 山札の先頭から1枚引いて手札へ
+  const card   = gs.deck.shift();
+  gs.drawnId   = card.id;   // UI でドット表示するために引いたカードのIDを記録
   p.hand.push(card);
   gs.phase = 'choose';
   addLog(gs, `${p.name} が山札からカードを引きました。`, 'act');
@@ -918,67 +1075,117 @@ async function execDraw(gs) {
   renderGame(gs);
 }
 
+/**
+ * 概要: ターン終了時に次のプレイヤーへ順番を進める。
+ * 詳細:
+ *   - 脱落したプレイヤーをスキップして次の生存者を探す
+ *   - 全員脱落の場合は endGame(gs, 'all') を呼ぶ
+ *   - 次プレイヤーの protected フラグを解除（守護は1ターンのみ有効）
+ *   - phase を 'draw' にして Firebase に書き込む
+ *     → 次のプレイヤーのリスナーが発火して execDraw() が実行される
+ * @param {Object} gs - ゲーム状態
+ */
 async function advanceTurn(gs) {
-  let next = (gs.currentTurn + 1) % gs.players.length;
-  let tries = 0;
-  while (gs.players[next].eliminated && tries < gs.players.length) {
-    next = (next + 1) % gs.players.length;
-    tries++;
+  let next = (gs.currentTurn + 1) % gs.players.length, t = 0;
+  while (gs.players[next].eliminated && t < gs.players.length) {
+    next = (next + 1) % gs.players.length; t++;
   }
-  if (tries >= gs.players.length) { await endGame(gs, 'all'); return; }
-  gs.players[next].protected = false;
+  if (t >= gs.players.length) { await endGame(gs, 'all'); return; }
+  gs.players[next].protected = false; // 守護効果は次の自分のターン開始時に解除
   gs.currentTurn = next;
-  gs.phase = 'draw';
-  gs.drawnId = null;
+  gs.phase       = 'draw';
+  gs.drawnId     = null;
   await pushGS(gs);
 }
 
+/**
+ * 概要: 現在のターンを終了して次ターンに進む。
+ * 詳細: 山札が空の場合は手札比較でゲーム終了、そうでなければ advanceTurn() を呼ぶ。
+ * @param {Object} gs - ゲーム状態
+ */
 async function endTurn(gs) {
-  if (gs.deck.length === 0) { await endGame(gs, 'deck'); return; }
+  if (!gs.deck.length) { await endGame(gs, 'deck'); return; }
   await advanceTurn(gs);
 }
 
+/**
+ * 概要: 自分の手番でカードを出す処理を実行する。
+ * 詳細:
+ *   - processing フラグで二重実行を防止
+ *   - 英雄(rank=10)は自発的に出せないためブロック
+ *   - カードを手札から取り出し捨て札に加えてから resolveEffect() で効果を処理する
+ *   - カードを出した通知を Firebase 経由で全員に送る
+ *     （手番プレイヤーはローカルで即時表示し、相手は onGsReceived() 経由で受け取る）
+ * @param {number} handIndex - 出すカードの手札インデックス
+ */
 async function playCard(handIndex) {
   if (processing) return;
-  const gs = deepCopy(lastGS);
+  const gs    = deepCopy(lastGS);
   const actor = gs.players[gs.currentTurn];
-  const card = actor.hand[handIndex];
+  const card  = actor.hand[handIndex];
   if (card.rank === 10) { toast('英雄は場に出せません', true); return; }
+
   actor.hand.splice(handIndex, 1);
   actor.discards.push(card);
-  gs.drawnId = null;
-  pickedIdx = null;
+  gs.drawnId   = null;
+  pickedIdx    = null;
   q('cdsc').classList.remove('vis');
   addLog(gs, `${actor.name} が「${card.rank} ${CD[card.rank].name}」を出しました。`, 'act');
-  // gsにカード情報をのせてFirebase経由で全員に通知
-  gs.lastPlayedCard = { rank: card.rank, id: card.id, playerName: actor.name, customMsg: null, notifySeq: (gs.seq || 0) + 1 };
-  gs.phase = 'card-announce'; // 通知中フェーズ
-  await pushGS(gs);
-  // 自分は通知を表示してから効果を実行
-  await showCardAnnounceAsync(actor.name, card);
+
+  // card-announce フェーズでカード通知を全員に送る
+  gs.lastPlayedCard = {
+    rank: card.rank, id: card.id,
+    playerName: actor.name,
+    customMsg:  null,        // null の場合は「〇〇が〇〇を出しました」を自動生成
+    isGuardian: false,
+    notifySeq:  (gs.seq || 0) + 1,
+  };
+  gs.phase = 'card-announce';
+
+  // 手番プレイヤーはローカルで先に通知を表示（並行して Firebase に書き込み）
+  const announceP = showCardAnnounceAsync(actor.name, card, null);
+  await pushGS(gs);  // 相手のリスナーが card-announce フェーズを受信して通知を表示
+  await announceP;   // 自分の通知アニメーションが終わるまで待つ
+
   gs.phase = 'effect-pending';
   await resolveEffect(gs, card, actor);
 }
 
-/* ═══════════════════════════════════════
-   カード効果
-═══════════════════════════════════════ */
+// ================================================================
+// カード効果ディスパッチャ
+// 概要: 出されたカードのランクに応じて対応する効果関数を呼ぶ。
+// ================================================================
 async function resolveEffect(gs, card, actor) {
   switch (card.rank) {
-    case 9: await fx皇帝(gs, actor); break;
-    case 8: await fx精霊(gs, actor); break;
-    case 7: fx賢者(gs, actor); await endTurn(gs); break;
-    case 6: await fx貴族(gs, actor); break;
-    case 5: await fx死神(gs, actor); break;
-    case 4: fx乙女(gs, actor); await endTurn(gs); break;
-    case 3: await fx占師(gs, actor); break;
-    case 2: await fx兵士(gs, actor); break;
-    case 1: await fx少年(gs, actor); break;
+    case 9:  await fx皇帝(gs, actor);             break;
+    case 8:  await fx精霊(gs, actor);             break;
+    case 7:  fx賢者(gs, actor); await endTurn(gs);break; // 賢者は次ターンに効果を適用するため即ターン終了
+    case 6:  await fx貴族(gs, actor);             break;
+    case 5:  await fx死神(gs, actor);             break;
+    case 4:  fx乙女(gs, actor); await endTurn(gs);break; // 乙女は自分に守護フラグを立てて即ターン終了
+    case 3:  await fx占師(gs, actor);             break;
+    case 2:  await fx兵士(gs, actor);             break;
+    case 1:  await fx少年(gs, actor);             break;
     default: await endTurn(gs);
   }
 }
 
-async function fx皇帝(gs, actor, fromBoy = false) {
+// ================================================================
+// カード効果実装
+// ================================================================
+
+/**
+ * 概要: 皇帝(9)の効果「公開処刑」を処理する。
+ * 詳細:
+ *   1. ターゲットを選択する（守護中も選択可能）
+ *   2. ターゲットに山札から1枚引かせ、手札を両者に公開する
+ *      （drawAndRevealThenPick() が公開モーダルを管理）
+ *   3. 出す側がどちらかを選択して捨てさせる
+ *   4. 英雄を捨てた場合は転生不可で脱落
+ * @param {Object} gs    - ゲーム状態
+ * @param {Object} actor - 皇帝を出したプレイヤー
+ */
+async function fx皇帝(gs, actor) {
   const targets = alivePlayers(gs).filter(p => p.id !== actor.id);
   if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
   gs.phase = 'effect-pending';
@@ -988,24 +1195,27 @@ async function fx皇帝(gs, actor, fromBoy = false) {
       const disc = tgt.hand.splice(ci, 1)[0];
       tgt.discards.push(disc);
       addLog(gs, `${actor.name} が ${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」を捨てさせました。`, 'act');
-      const empMsg = `皇帝の効果：${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」が捨てられました`;
-      gs.lastPlayedCard = { rank: disc.rank, id: disc.id, playerName: '', customMsg: empMsg, notifySeq: (gs.seq || 0) + 1 };
+      const msg = `皇帝の効果：${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」が捨てられました`;
+      gs.lastPlayedCard = { rank:disc.rank, id:disc.id, playerName:'', customMsg:msg, isGuardian:false, notifySeq:(gs.seq||0)+1 };
       gs.phase = 'card-announce';
       await pushGS(gs);
-      await showCardAnnounceAsync('', disc, empMsg);
+      await showCardAnnounceAsync('', disc, msg);
       gs.phase = 'effect-pending';
-      if (disc.rank === 10) {
-        addLog(gs, '英雄が皇帝に処刑！転生不可。', 'elim');
-        eliminate(gs, tgt, false);
-      } else if (!tgt.hand.length) eliminate(gs, tgt, false);
+      if (disc.rank === 10) { addLog(gs,'英雄が皇帝に処刑！転生不可。','elim'); eliminate(gs,tgt,false); }
+      else if (!tgt.hand.length) eliminate(gs, tgt, false);
       if (!checkWin(gs)) await endTurn(gs);
     });
   });
 }
 
+/**
+ * 概要: 精霊(8)の効果「交換」を処理する。
+ * 詳細: ターゲットを選択して手札を交換する。
+ *       手札[0]同士を swap するだけなので実装は単純。
+ */
 async function fx精霊(gs, actor) {
   const targets = alivePlayers(gs).filter(p => p.id !== actor.id);
-  if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
+  if (!targets.length) { addLog(gs,'対象なし','act'); await endTurn(gs); return; }
   gs.phase = 'effect-pending';
   await pushGS(gs); renderGame(gs);
   pickTarget('精霊 - 交換', '交換する相手を指名してください', targets, async tgt => {
@@ -1015,51 +1225,72 @@ async function fx精霊(gs, actor) {
   });
 }
 
+/**
+ * 概要: 賢者(7)の効果「選択」を処理する。
+ * 詳細: actor.sageMode = true を立てるだけ。
+ *       実際の3枚ドロー処理は次ターンの execDraw() 内で行われる。
+ */
 function fx賢者(gs, actor) {
   actor.sageMode = true;
   addLog(gs, `${actor.name} は賢者の効果を得ました。次手番で3枚引きます。`, 'act');
 }
 
+/**
+ * 概要: 貴族(6)の効果「対決」を処理する。
+ * 詳細: 両者の手札ランクを比較して小さい方を脱落させる。
+ *       同値の場合は相打ちで両者脱落。
+ */
 async function fx貴族(gs, actor) {
   const targets = alivePlayers(gs).filter(p => p.id !== actor.id);
-  if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
+  if (!targets.length) { addLog(gs,'対象なし','act'); await endTurn(gs); return; }
   gs.phase = 'effect-pending';
   await pushGS(gs); renderGame(gs);
   pickTarget('貴族 - 対決', '対決する相手を指名してください', targets, async tgt => {
     const aR = actor.hand[0]?.rank ?? 0, tR = tgt.hand[0]?.rank ?? 0;
     addLog(gs, `対決: ${actor.name}(${aR}) vs ${tgt.name}(${tR})`, 'act');
-    if (aR < tR)      { addLog(gs, `${actor.name} 脱落！`, 'elim'); eliminate(gs, actor, true); }
-    else if (tR < aR) { addLog(gs, `${tgt.name} 脱落！`, 'elim');   eliminate(gs, tgt, true); }
-    else              { addLog(gs, '相打ち！', 'elim'); eliminate(gs, actor, true); eliminate(gs, tgt, true); }
+    if      (aR < tR) { addLog(gs,`${actor.name} 脱落！`,'elim'); eliminate(gs,actor,true); }
+    else if (tR < aR) { addLog(gs,`${tgt.name} 脱落！`,'elim');   eliminate(gs,tgt,true); }
+    else              { addLog(gs,'相打ち！','elim'); eliminate(gs,actor,true); eliminate(gs,tgt,true); }
     if (!checkWin(gs)) await endTurn(gs);
   });
 }
 
+/**
+ * 概要: 死神(5)の効果「疫病」を処理する。
+ * 詳細:
+ *   1. ターゲットに1枚引かせ手札をシャッフルして中身を隠す
+ *   2. 出す側: どちらか（左/右）を盲目で選択するモーダルを表示
+ *   3. ターゲット側: 「?/?」の見るだけモーダルを Firebase 経由で表示
+ *      （revealInfo.blind=true により ?/? 表示となる）
+ *   4. 選択後、捨てられたカードを両者にカード通知で表示
+ */
 async function fx死神(gs, actor) {
   const targets = alivePlayers(gs).filter(p => p.id !== actor.id);
-  if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
+  if (!targets.length) { addLog(gs,'対象なし','act'); await endTurn(gs); return; }
   gs.phase = 'effect-pending';
   await pushGS(gs); renderGame(gs);
   pickTarget('死神 - 疫病', '指名する相手を選んでください', targets, async tgt => {
-    if (!gs.deck.length) { addLog(gs, '山札なし', 'act'); await endTurn(gs); return; }
+    if (!gs.deck.length) { addLog(gs,'山札なし','act'); await endTurn(gs); return; }
     tgt.hand.push(gs.deck.shift());
-    tgt.hand = shuffle(tgt.hand);
+    tgt.hand = shuffle(tgt.hand); // 盲目選択のためシャッフルしてどちらが何か分からなくする
     addLog(gs, `${tgt.name} が引きました（死神効果）。手札シャッフル済み。`, 'act');
-    // 受ける側に「?/?」の見るだけモーダルをFirebase経由で表示
-    const revealSeq = (gs.seq || 0) + 1;
-    gs.revealInfo = {
-      title: `死神 - 疫病 - ${tgt.name} の手札`,
-      desc: `${actor.name} がどちらかを捨てさせます（中身は不明）`,
-      cards: [{rank:'?',id:-1},{rank:'?',id:-2}], // 盲目なので?表示
-      blind: true,
-      targetUid: tgt.uid,
+
+    // ターゲット側に ?/? の見るだけモーダルを Firebase 経由で表示
+    const revealSeq  = (gs.seq || 0) + 1;
+    gs.revealInfo    = {
+      title:'死神 - 疫病 - ' + tgt.name + ' の手札',
+      desc: actor.name + ' がどちらかを捨てさせます（中身は不明）',
+      cards:[{rank:'?',id:-1},{rank:'?',id:-2}],
+      blind:    true,      // 盲目選択なので ?/? 表示
+      targetUid:tgt.uid,
       actorUid: actor.uid,
       revealSeq,
     };
     gs.phase = 'reveal-cards';
     await pushGS(gs);
     renderGame(gs);
-    // 出す側：盲目選択モーダルを表示（従来通り）
+
+    // 出す側は盲目選択モーダルを表示
     showModal('死神 - 疫病',
       `${tgt.name} の手札（2枚）どちらを捨てさせますか？\n（どちらが何かは不明）`,
       `<div class="mch">
@@ -1067,36 +1298,49 @@ async function fx死神(gs, actor) {
         <div class="blnd" id="_rb1"><div class="ci"><div class="cr" style="color:var(--dim)">?</div><div class="cn" style="color:var(--dim)">右</div></div></div>
       </div>`
     );
+
     const pick = async idx => {
       closeModal();
       const disc = tgt.hand.splice(idx, 1)[0];
       tgt.discards.push(disc);
-      const discMsg = `死神の効果：${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」が捨てられました`;
       addLog(gs, `${actor.name} が ${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」を捨てさせました（死神）。`, 'act');
-      // 捨てられたカードを両者に通知（Firebase経由）
-      gs.lastPlayedCard = { rank: disc.rank, id: disc.id, playerName: '', customMsg: discMsg, notifySeq: (gs.seq || 0) + 1 };
+      const msg = `死神の効果：${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」が捨てられました`;
+      gs.lastPlayedCard = { rank:disc.rank, id:disc.id, playerName:'', customMsg:msg, isGuardian:false, notifySeq:(gs.seq||0)+1 };
       gs.phase = 'card-announce';
       await pushGS(gs);
-      // 自分には即座に通知表示し、待ってから次の処理
-      await showCardAnnounceAsync('', disc, discMsg);
+      await showCardAnnounceAsync('', disc, msg);
       gs.phase = 'effect-pending';
-      if (disc.rank === 10) { addLog(gs, '英雄が死神で脱落→転生！', 'elim'); elimRebirth(gs, tgt); }
+      if (disc.rank === 10) { addLog(gs,'英雄が死神で脱落→転生！','elim'); elimRebirth(gs,tgt); }
       else if (!tgt.hand.length) eliminate(gs, tgt, true);
       if (!checkWin(gs)) await endTurn(gs);
     };
-    q('_rb0').addEventListener('click', () => pick(0), { once: true });
-    q('_rb1').addEventListener('click', () => pick(1), { once: true });
+    q('_rb0').addEventListener('click', () => pick(0), { once:true });
+    q('_rb1').addEventListener('click', () => pick(1), { once:true });
   });
 }
 
+/**
+ * 概要: 乙女(4)の効果「守護」を処理する。
+ * 詳細: actor.protected = true を立てるだけ。
+ *       次ターン開始時（advanceTurn()）に protected が false にリセットされる。
+ *       守護中のプレイヤーを対象に指名した場合は pickTarget() 内で守護発動通知を送る。
+ */
 function fx乙女(gs, actor) {
   actor.protected = true;
   addLog(gs, `${actor.name} は守護状態になりました。`, 'act');
 }
 
+/**
+ * 概要: 占師(3)の効果「透視」を処理する。
+ * 詳細:
+ *   - ターゲットの手札(hand[0])を showModal で表示する（出す側のみ）
+ *   - ターゲット・第三者には何のカードを見たかは通知されない
+ *   - 「確認」ボタンを押してから endTurn() を呼ぶことで、
+ *     ボタンを押すまでゲームが止まる（情報確認の猶予を与える）
+ */
 async function fx占師(gs, actor) {
   const targets = alivePlayers(gs).filter(p => p.id !== actor.id);
-  if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
+  if (!targets.length) { addLog(gs,'対象なし','act'); await endTurn(gs); return; }
   gs.phase = 'effect-pending';
   await pushGS(gs); renderGame(gs);
   pickTarget('占師 - 透視', '手札を覗く相手を指名してください', targets, async tgt => {
@@ -1107,13 +1351,21 @@ async function fx占師(gs, actor) {
        <div class="mbtns"><button class="btn btn-o btn-sm" id="_sok">確認</button></div>`
     );
     await pushGS(gs); renderGame(gs);
-    q('_sok').addEventListener('click', async () => { closeModal(); await endTurn(gs); }, { once: true });
+    q('_sok').addEventListener('click', async () => { closeModal(); await endTurn(gs); }, { once:true });
   });
 }
 
+/**
+ * 概要: 兵士(2)の効果「捜査」を処理する。
+ * 詳細:
+ *   1. ランク1〜10から宣言するランクを選択する
+ *   2. 宣言ランク・結果（的中/不正解）を両者にカード通知で表示する
+ *   3. 的中した場合: 対象プレイヤーを脱落させる
+ *      英雄(10)が的中した場合は転生処理を行う
+ */
 async function fx兵士(gs, actor) {
   const targets = alivePlayers(gs).filter(p => p.id !== actor.id);
-  if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
+  if (!targets.length) { addLog(gs,'対象なし','act'); await endTurn(gs); return; }
   gs.phase = 'effect-pending';
   await pushGS(gs); renderGame(gs);
   pickTarget('兵士 - 捜査', '言い当てる相手を指名してください', targets, async tgt => {
@@ -1127,26 +1379,27 @@ async function fx兵士(gs, actor) {
       q(`_r${r}`).addEventListener('click', () => {
         document.querySelectorAll('.rb').forEach(b => b.classList.remove('on'));
         q(`_r${r}`).classList.add('on');
-        guess = r;
-        q('_solok').disabled = false;
+        guess = r; q('_solok').disabled = false;
       });
     }
     q('_solok').addEventListener('click', async () => {
       if (guess === null) return;
       closeModal();
-      const actual = tgt.hand[0]?.rank;
+      const actual  = tgt.hand[0]?.rank;
+      const isHit   = guess === actual;
       addLog(gs, `${actor.name} が ${tgt.name} の手札を「${guess}」と宣言。`, 'act');
-      // 的中・外れに関わらず宣言カードを両者に通知
-      const guessCard = { rank: guess, id: -1 }; // 仮のカードオブジェクト（表示用）
-      const isHit = guess === actual;
+
+      // 宣言カードを両者に通知（的中・不正解どちらも表示）
+      const guessCard  = { rank:guess, id:-1 };
       const declareMsg = isHit
         ? `兵士的中！${tgt.name} の手札は「${guess} ${CD[guess].name}」`
         : `${actor.name} が「${guess} ${CD[guess].name}」と宣言 → 不正解`;
-      gs.lastPlayedCard = { rank: guess, id: -1, playerName: '', customMsg: declareMsg, notifySeq: (gs.seq || 0) + 1 };
+      gs.lastPlayedCard = { rank:guess, id:-1, playerName:'', customMsg:declareMsg, isGuardian:false, notifySeq:(gs.seq||0)+1 };
       gs.phase = 'card-announce';
       await pushGS(gs);
       await showCardAnnounceAsync('', guessCard, declareMsg);
       gs.phase = 'effect-pending';
+
       if (isHit) {
         addLog(gs, `正解！${tgt.name} の手札は ${actual}${CD[actual].name}。脱落！`, 'elim');
         if (actual === 10) elimRebirth(gs, tgt); else eliminate(gs, tgt, true);
@@ -1154,21 +1407,20 @@ async function fx兵士(gs, actor) {
         addLog(gs, '不正解。', 'act');
       }
       if (!checkWin(gs)) await endTurn(gs);
-    }, { once: true });
+    }, { once:true });
   });
 }
 
-// 全プレイヤーの捨て札にある少年（rank=1）の合計枚数を返す
-// 自分が今出した少年はすでに捨て札に加えられているのでそのままカウント
-function countBoyInDiscards(gs) {
-  return gs.players.reduce((sum, p) => {
-    return sum + p.discards.filter(card => card.rank === 1).length;
-  }, 0);
-}
-
+/**
+ * 概要: 少年(1)の効果「革命」を処理する。
+ * 詳細:
+ *   - countBoyInDiscards() で場全体の少年の捨て枚数をカウントする
+ *   - 1枚目（自分含め初めて場に出た少年）: 効果なし
+ *   - 2枚目以降: 皇帝と同じ「公開処刑」を発動する（英雄は転生可能）
+ *   boyPlayed フラグではなく捨て札をカウントする方式を採用することで、
+ *   「死神・皇帝に捨てさせられた少年」も正しくカウントされる。
+ */
 async function fx少年(gs, actor) {
-  // 捨て札の少年が1枚（今出したのが最初）なら効果なし
-  // 2枚以上（誰かが以前出した or 捨てさせられた）なら公開処刑発動
   const boyCount = countBoyInDiscards(gs);
   if (boyCount <= 1) {
     addLog(gs, `少年${boyCount}枚目（場全体）。効果なし（2枚目で公開処刑）。`, 'act');
@@ -1176,7 +1428,7 @@ async function fx少年(gs, actor) {
   } else {
     addLog(gs, `少年${boyCount}枚目！公開処刑発動！`, 'imp');
     const targets = alivePlayers(gs).filter(p => p.id !== actor.id);
-    if (!targets.length) { addLog(gs, '対象なし', 'act'); await endTurn(gs); return; }
+    if (!targets.length) { addLog(gs,'対象なし','act'); await endTurn(gs); return; }
     gs.phase = 'effect-pending';
     await pushGS(gs); renderGame(gs);
     pickTarget('少年(革命) - 公開処刑', '相手を指名してください', targets, async tgt => {
@@ -1184,13 +1436,13 @@ async function fx少年(gs, actor) {
         const disc = tgt.hand.splice(ci, 1)[0];
         tgt.discards.push(disc);
         addLog(gs, `${actor.name} が ${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」を捨てさせました（少年）。`, 'act');
-        const boyDiscMsg = `少年の効果：${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」が捨てられました`;
-        gs.lastPlayedCard = { rank: disc.rank, id: disc.id, playerName: '', customMsg: boyDiscMsg, notifySeq: (gs.seq || 0) + 1 };
+        const msg = `少年の効果：${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」が捨てられました`;
+        gs.lastPlayedCard = { rank:disc.rank, id:disc.id, playerName:'', customMsg:msg, isGuardian:false, notifySeq:(gs.seq||0)+1 };
         gs.phase = 'card-announce';
         await pushGS(gs);
-        await showCardAnnounceAsync('', disc, boyDiscMsg);
+        await showCardAnnounceAsync('', disc, msg);
         gs.phase = 'effect-pending';
-        if (disc.rank === 10) { addLog(gs, '英雄が少年で脱落→転生！', 'elim'); elimRebirth(gs, tgt); }
+        if (disc.rank === 10) { addLog(gs,'英雄が少年で脱落→転生！','elim'); elimRebirth(gs,tgt); }
         else if (!tgt.hand.length) eliminate(gs, tgt, false);
         if (!checkWin(gs)) await endTurn(gs);
       });
@@ -1198,6 +1450,15 @@ async function fx少年(gs, actor) {
   }
 }
 
+/**
+ * 概要: 賢者効果での3択カード選択モーダルを表示する。
+ * 詳細:
+ *   - execDraw() から呼ばれ、引いた3枚を選択肢として表示する
+ *   - 選択後、残り2枚を山札に戻してシャッフルし、選んだカードを手札に加える
+ *   - 選択が完了したら Firebase に書き込んで phase='choose' に移行する
+ * @param {Object}  gs    - ゲーム状態
+ * @param {Array}   drawn - 賢者効果で引いたカード配列
+ */
 function showSagePick(gs, drawn) {
   let sel = null;
   showModal('賢者 - 選択',
@@ -1209,8 +1470,7 @@ function showSagePick(gs, drawn) {
     q(`_sp${i}`).addEventListener('click', () => {
       document.querySelectorAll('.mcc').forEach(e => e.classList.remove('on'));
       q(`_sp${i}`).classList.add('on');
-      sel = i;
-      q('_spok').disabled = false;
+      sel = i; q('_spok').disabled = false;
     });
   });
   q('_spok').addEventListener('click', async () => {
@@ -1219,24 +1479,47 @@ function showSagePick(gs, drawn) {
     const rest   = drawn.filter((_, i) => i !== sel);
     const actor  = gs.players[gs.currentTurn];
     actor.hand.push(chosen);
-    gs.deck.push(...rest);
-    gs.deck = shuffle(gs.deck);
+    gs.deck.push(...rest); gs.deck = shuffle(gs.deck); // 残り2枚を山札に戻してシャッフル
     gs.drawnId = chosen.id;
-    gs.phase = 'choose';
+    gs.phase   = 'choose';
     addLog(gs, `${actor.name} が「${chosen.rank} ${CD[chosen.rank].name}」を選びました。`, 'act');
     closeModal();
     await pushGS(gs);
     renderGame(gs);
-  }, { once: true });
+  }, { once:true });
 }
 
-/* ═══════════════════════════════════════
-   ゲームヘルパー
-═══════════════════════════════════════ */
-function alivePlayers(gs) { return gs.players.filter(p => !p.eliminated); }
-function deepCopy(gs)     { return JSON.parse(JSON.stringify(gs)); }
+// ================================================================
+// ゲームヘルパー関数
+// ================================================================
 
-function eliminate(gs, p, _rebirth) {
+/** 脱落していない全プレイヤーを返す */
+function alivePlayers(gs) { return gs.players.filter(p => !p.eliminated); }
+
+/** ゲーム状態をディープコピーして返す（Firebase JSON を経由した完全な配列復元） */
+function deepCopy(gs) { return JSON.parse(JSON.stringify(gs)); }
+
+/**
+ * 概要: 全プレイヤーの捨て札にある少年(rank=1)の総枚数を返す。
+ * 詳細: boyPlayed フラグの代わりにこの関数を使用することで、
+ *       皇帝・死神・兵士によって捨てさせられた少年も正しくカウントできる。
+ * @param {Object} gs - ゲーム状態
+ * @returns {number} 場全体の少年の捨て枚数
+ */
+function countBoyInDiscards(gs) {
+  return gs.players.reduce((sum, p) =>
+    sum + p.discards.filter(c => c.rank === 1).length, 0);
+}
+
+/**
+ * 概要: プレイヤーを脱落させる。
+ * 詳細:
+ *   - eliminated フラグを立てて手札を捨て札に移動する
+ *   - 既に脱落済みの場合は何もしない（二重脱落防止）
+ * @param {Object}  gs     - ゲーム状態
+ * @param {Object}  p      - 脱落させるプレイヤー
+ */
+function eliminate(gs, p) {
   if (p.eliminated) return;
   p.eliminated = true;
   const cards = p.hand.map(c => `${c.rank}${CD[c.rank].name}`).join(',');
@@ -1245,21 +1528,38 @@ function eliminate(gs, p, _rebirth) {
   p.hand = [];
 }
 
+/**
+ * 概要: 英雄を転生させる。転生札がなければ通常脱落させる。
+ * 詳細:
+ *   - 転生条件: rebirthUsed=false かつ rebirthCard が存在する
+ *   - 転生時: 手札を全て捨て札に移動し、転生札を新しい手札とする
+ *   - 転生後は rebirthCard=null、rebirthUsed=true にして再使用を防ぐ
+ * @param {Object} gs - ゲーム状態
+ * @param {Object} p  - 転生させるプレイヤー
+ */
 function elimRebirth(gs, p) {
   if (!gs.rebirthUsed && gs.rebirthCard) {
     addLog(gs, `${p.name} の英雄が転生！`, 'imp');
-    p.discards.push(...p.hand);
-    p.hand = [];
+    p.discards.push(...p.hand); p.hand = [];
     p.hand.push(gs.rebirthCard);
-    gs.rebirthCard = null;
-    gs.rebirthUsed = true;
+    gs.rebirthCard  = null;
+    gs.rebirthUsed  = true;
     addLog(gs, `${p.name} が転生札「${p.hand[0].rank} ${CD[p.hand[0].rank].name}」で復帰！`, 'imp');
   } else {
     addLog(gs, `転生札なし。${p.name} 脱落。`, 'elim');
-    eliminate(gs, p, false);
+    eliminate(gs, p);
   }
 }
 
+/**
+ * 概要: 勝利条件を判定してゲームを終了させる。
+ * 詳細:
+ *   - 生存者が1人: survivor として終了
+ *   - 生存者が0人: all として終了（相打ちなど）
+ *   - 生存者が2人以上: まだゲーム継続
+ * @param {Object} gs - ゲーム状態
+ * @returns {boolean} ゲームが終了した場合 true
+ */
 function checkWin(gs) {
   const alive = alivePlayers(gs);
   if (alive.length <= 1) {
@@ -1269,63 +1569,96 @@ function checkWin(gs) {
   return false;
 }
 
+/**
+ * 概要: ゲームを終了させて勝者を決定し Firebase に書き込む。
+ * 詳細:
+ *   - 'survivor': 最後の生存者が勝者
+ *   - 'deck'    : 山札切れ → 生存者の中でランク最大のプレイヤーが勝者（複数可）
+ *   - 'all'     : 全員脱落 → 引き分け（winners=[]）
+ *   終了後 saveStats() で勝敗記録を Firebase に保存する。
+ * @param {Object} gs     - ゲーム状態
+ * @param {string} reason - 終了理由 ('survivor' | 'deck' | 'all')
+ */
 async function endGame(gs, reason) {
   gs.gameOver = true;
   const alive = alivePlayers(gs);
-  if (reason === 'survivor') {
+  if      (reason === 'survivor') {
     gs.winners = alive.map(p => p.id);
   } else if (reason === 'deck') {
-    const mx = Math.max(...alive.map(p => p.hand[0]?.rank ?? 0));
+    const mx   = Math.max(...alive.map(p => p.hand[0]?.rank ?? 0));
     gs.winners = alive.filter(p => (p.hand[0]?.rank ?? 0) === mx).map(p => p.id);
   } else {
     gs.winners = [];
   }
   const wn = gs.winners.map(id => gs.players[id].name);
-  addLog(gs, wn.length === 1 ? `${wn[0]} の勝利！` : wn.length > 1 ? `${wn.join('と')} が引き分け` : '引き分け', 'imp');
+  addLog(gs, wn.length === 1
+    ? `${wn[0]} の勝利！`
+    : wn.length > 1 ? `${wn.join('と')} が引き分け` : '引き分け', 'imp');
   await setField(`rooms/${roomCode}/status`, 'ended');
   await saveGS(roomCode, gs);
-  // 勝敗記録を Firebase に書き込む
   await saveStats(gs);
 }
 
+/**
+ * 概要: ゲーム終了時に全プレイヤーの勝敗記録を Firebase に保存する。
+ * 詳細:
+ *   - rooms/{roomCode}/stats/{uid} に {wins, draws, losses, name} を累積保存する
+ *   - 引き分け: 全員 draws+1
+ *   - 勝者: wins+1、それ以外: losses+1
+ * @param {Object} gs - ゲーム状態
+ */
 async function saveStats(gs) {
   try {
-    const snap = await getRoom(roomCode);
+    const snap     = await getRoom(roomCode);
     if (!snap.exists()) return;
-    const room = snap.val();
-    const prevStats = room.stats || {};
-    const newStats = { ...prevStats };
+    const prevStats = snap.val().stats || {};
+    const newStats  = { ...prevStats };
     for (const p of gs.players) {
-      const uid = p.uid;
-      const prev = newStats[uid] || { wins: 0, draws: 0, losses: 0, name: p.name };
-      const isWinner = gs.winners.includes(p.id);
-      const isDraw   = gs.winners.length !== 1;
-      if (isDraw) {
-        newStats[uid] = { ...prev, name: p.name, draws: (prev.draws || 0) + 1 };
-      } else if (isWinner) {
-        newStats[uid] = { ...prev, name: p.name, wins: (prev.wins || 0) + 1 };
-      } else {
-        newStats[uid] = { ...prev, name: p.name, losses: (prev.losses || 0) + 1 };
-      }
+      const prev      = newStats[p.uid] || { wins:0, draws:0, losses:0, name:p.name };
+      const isWinner  = gs.winners.includes(p.id);
+      const isDraw    = gs.winners.length !== 1;
+      if      (isDraw)     newStats[p.uid] = { ...prev, name:p.name, draws:  (prev.draws||0)+1 };
+      else if (isWinner)   newStats[p.uid] = { ...prev, name:p.name, wins:   (prev.wins||0)+1  };
+      else                 newStats[p.uid] = { ...prev, name:p.name, losses: (prev.losses||0)+1 };
     }
     await setField(`rooms/${roomCode}/stats`, newStats);
   } catch(e) { console.error('saveStats error:', e); }
 }
 
+/**
+ * 概要: ゲームログに1行追加する。
+ * 詳細: type により UI でのスタイルが変わる（'act'=通常, 'elim'=赤, 'imp'=金）。
+ *       80行を超えた場合は古いものから削除して肥大化を防ぐ。
+ * @param {Object} gs   - ゲーム状態
+ * @param {string} msg  - ログメッセージ
+ * @param {string} type - ログタイプ ('act' | 'elim' | 'imp')
+ */
 function addLog(gs, msg, type = 'act') {
   if (!gs.log) gs.log = [];
   gs.log.push({ msg, type });
   if (gs.log.length > 80) gs.log = gs.log.slice(-80);
 }
 
-/* ═══════════════════════════════════════
-   描画
-═══════════════════════════════════════ */
+// ================================================================
+// 画面描画
+// ================================================================
+
+/**
+ * 概要: ゲーム画面全体を最新のゲーム状態で更新する。
+ * 詳細:
+ *   - ヘッダー（山札枚数・転生状態）を更新する
+ *   - ターンバー（手番プレイヤー名・賢者モード）を更新する
+ *   - 相手エリア: 守護/脱落状態に応じたゾーンスタイル、裏向き手札、捨て札を描画する
+ *   - 自分エリア: 表向き手札（選択可能なカードにクリックリスナー付与）と捨て札を描画する
+ *   - アクションパネル: 現在の phase と自分のターンかどうかに応じてボタンを描画する
+ *   - ログ: 前回描画時からの新しい行だけを DOM に追記する（logLen で管理）
+ * @param {Object} gs - ゲーム状態
+ */
 function renderGame(gs) {
   if (!gs) return;
   lastGS = gs;
 
-  // ヘッダー更新
+  // ── ヘッダー更新 ──
   const deckLen = gs.deck.length;
   q('g-deck').textContent  = deckLen;
   q('g-deck2').textContent = deckLen;
@@ -1334,40 +1667,39 @@ function renderGame(gs) {
   q('g-reb2').textContent  = rebStr;
   q('g-reb2').className    = 'rebirth-status ' + (gs.rebirthUsed ? 'reb-off' : 'reb-on');
 
-  const cp     = gs.players[gs.currentTurn];
-  const myMe   = gs.players.find(p => p.uid === myUid);
-  const myTurn = cp && cp.uid === myUid && !cp.eliminated;
-  q('g-turn').textContent = cp ? cp.name : '-';
-  q('g-sage').innerHTML   = cp && cp.sageMode
+  const cp      = gs.players[gs.currentTurn];
+  const myMe    = gs.players.find(p => p.uid === myUid);
+  const myTurn  = cp && cp.uid === myUid && !cp.eliminated;
+  q('g-turn').textContent = cp?.name ?? '-';
+  q('g-sage').innerHTML   = cp?.sageMode
     ? `<span class="mytag">賢者モード</span>` : '';
 
-  // 自分エリア更新
+  // ── 自分エリア更新 ──
   if (myMe) {
     q('my-name-lbl').textContent = myMe.name;
     let myBadges = '';
     if (myMe.id === gs.currentTurn && !myMe.eliminated) myBadges += `<span class="badge bt">手番</span>`;
-    if (myMe.eliminated)  myBadges += `<span class="badge be">脱落</span>`;
-    if (myMe.protected)   myBadges += `<span class="badge bp">守護</span>`;
-    if (myMe.sageMode)    myBadges += `<span class="badge bs">賢者</span>`;
+    if (myMe.eliminated) myBadges += `<span class="badge be">脱落</span>`;
+    if (myMe.protected)  myBadges += `<span class="badge bp">守護</span>`;
+    if (myMe.sageMode)   myBadges += `<span class="badge bs">賢者</span>`;
     q('my-badges').innerHTML = myBadges;
 
-    const myHand = q('my-hand');
+    // 手札カードを描画（自分のターンかつ choose フェーズなら選択可能にする）
+    const myHand  = q('my-hand');
     myHand.innerHTML = '';
     const canPlay = myTurn && gs.phase === 'choose';
     myMe.hand.forEach((c, i) => {
-      const drawn  = gs.drawnId !== null && c.id === gs.drawnId;
+      const drawn  = gs.drawnId !== null && c.id === gs.drawnId; // 今引いたカードかどうか
       const sel    = pickedIdx === i;
-      const noPlay = c.rank === 10;
-      const el = document.createElement('div');
+      const noPlay = c.rank === 10; // 英雄は出せない
+      const el     = document.createElement('div');
       el.className = `hc c${c.rank}${canPlay && !noPlay ? ' sp' : ''}${sel ? ' pk' : ''}`;
-      el.dataset.idx = i;
-      el.dataset.ok  = canPlay && !noPlay ? 1 : 0;
-      el.title = CD[c.rank].desc;
+      el.title     = CD[c.rank].desc;
       el.innerHTML = `${drawn ? '<div class="ddot"></div>' : ''}${cardInner(c)}`;
       if (canPlay && !noPlay) {
         el.addEventListener('click', () => {
           pickedIdx = i;
-          q('cdsc').className = 'cdsc vis';
+          q('cdsc').className   = 'cdsc vis';
           q('cdsc').textContent = `${c.rank} ${CD[c.rank].name}（${CD[c.rank].eff}）: ${CD[c.rank].desc}`;
           renderGame(lastGS);
         });
@@ -1378,7 +1710,7 @@ function renderGame(gs) {
       myHand.innerHTML = `<div style="color:var(--dim);font-family:'Cinzel',serif;font-size:11px;letter-spacing:2px">脱落</div>`;
     }
 
-    // 自分の捨て札
+    // 自分の捨て札を描画
     const myDiscArea = q('my-discards');
     if (myDiscArea) {
       myDiscArea.innerHTML = myMe.discards.length
@@ -1389,13 +1721,11 @@ function renderGame(gs) {
     }
   }
 
-
-
-  // 相手エリア更新
+  // ── 相手エリア更新 ──
   const opArea = q('g-opponents');
   opArea.innerHTML = '';
   for (const p of gs.players) {
-    if (p.uid === myUid) continue; // 自分はスキップ
+    if (p.uid === myUid) continue; // 自分はスキップ（下の自分エリアに表示）
     const act = p.id === gs.currentTurn;
     const div = document.createElement('div');
     div.className = `ozone${act ? ' act' : ''}${p.eliminated ? ' ded' : ''}${p.protected ? ' prt' : ''}`;
@@ -1406,16 +1736,13 @@ function renderGame(gs) {
     if (p.protected)          badges += `<span class="badge bp">守護</span>`;
     if (p.sageMode)           badges += `<span class="badge bs">賢者</span>`;
 
-    // 裏向き手札
+    // 相手の手札は裏向きで表示（枚数だけ分かる）
     const handHTML = !p.eliminated
       ? p.hand.map(() =>
           `<div class="hc back" style="width:60px;height:86px">
             <div class="ci"><div class="cr" style="color:var(--dim);font-size:11px;font-family:'Cinzel',serif">?</div></div>
-          </div>`
-        ).join('')
+          </div>`).join('')
       : '';
-
-    // 捨て札
     const discHTML = p.discards.map(c =>
       `<div class="mc c${c.rank}" title="${CD[c.rank].name}">${cardInner(c, true)}</div>`
     ).join('');
@@ -1427,18 +1754,20 @@ function renderGame(gs) {
         <div class="oz-badges">${badges}</div>
       </div>
       <div class="oz-hand">${handHTML}</div>
-      ${p.discards.length ? `<div class="oz-discards"><span class="oz-disc-lbl">捨て札</span><div style="display:flex;gap:3px;flex-wrap:wrap">${discHTML}</div></div>` : ''}
-    `;
+      ${p.discards.length
+        ? `<div class="oz-discards"><span class="oz-disc-lbl">捨て札</span>
+           <div style="display:flex;gap:3px;flex-wrap:wrap">${discHTML}</div></div>`
+        : ''}`;
     opArea.appendChild(div);
   }
 
-  // アクションパネル
+  // ── アクションパネル更新 ──
   const atEl = q('aplt'), ab = q('abtns');
   ab.innerHTML = '';
   if (gs.gameOver) { atEl.textContent = 'ゲーム終了'; return; }
   if (!myTurn) {
     atEl.textContent = '他のプレイヤーの手番';
-    ab.innerHTML = `<div class="wmsg"><div class="wmsg-dot"></div>${cp ? cp.name : '...'} が操作中...</div>`;
+    ab.innerHTML = `<div class="wmsg"><div class="wmsg-dot"></div>${cp?.name ?? '...'} が操作中...</div>`;
     return;
   }
   if (gs.phase === 'choose') {
@@ -1464,7 +1793,7 @@ function renderGame(gs) {
     atEl.textContent = '処理中...';
   }
 
-  // ログ追記
+  // ── ログ追記（新しい行だけ DOM に追加） ──
   if (gs.log && gs.log.length > logLen) {
     const logEl = q('glog');
     for (let i = logLen; i < gs.log.length; i++) {
@@ -1479,69 +1808,15 @@ function renderGame(gs) {
   }
 }
 
-// ════════ 通知ユーティリティ ════════
-let _lastAnnouncedSeq = -1;
-let _lastCardAnnounceSeq = -1;
-let _lastRevealSeq = -1;
-let _revealModalOpen = false; // revealモーダルが開いているときのみtrue
-let _lastGuardianSeq = -1;
-
-// Promiseベースのカード通知（表示が終わるまで待てる）
-// msg が null の場合は「playerName が「X カード名」を出しました」を自動生成
-// msg に文字列を渡すとそのままラベルに表示（死神・兵士など）
-function showCardAnnounceAsync(playerName, card, msg = null) {
-  return new Promise(resolve => {
-    const el    = q('card-announce');
-    const label = q('card-announce-label');
-    const cCard = q('card-announce-card');
-    if (!el) { resolve(); return; }
-    label.textContent = msg !== null
-      ? msg
-      : `${playerName} が「${card.rank} ${CD[card.rank].name}」を出しました`;
-    cCard.innerHTML = `<div class="hc c${card.rank}" style="width:100px;height:144px;border-radius:10px;border:1px solid;cursor:default">${cardInner(card)}</div>`;
-    el.classList.remove('hide');
-    el.classList.add('show');
-    setTimeout(() => {
-      el.classList.add('hide');
-      setTimeout(() => { el.classList.remove('show','hide'); resolve(); }, 400);
-    }, 1600);
-  });
-}
-
-// 守護発動通知（Promiseベース）
-function showGuardianAnnounceAsync(targetName) {
-  return new Promise(resolve => {
-    const el    = q('card-announce');
-    const label = q('card-announce-label');
-    const cCard = q('card-announce-card');
-    if (!el) { resolve(); return; }
-    label.textContent = `🛡 ${targetName} の守護が発動！効果を無効にしました`;
-    cCard.innerHTML = `<div class="hc c4" style="width:100px;height:144px;border-radius:10px;border:1px solid;cursor:default">${cardInner({rank:4})}</div>`;
-    el.classList.remove('hide');
-    el.classList.add('show');
-    setTimeout(() => {
-      el.classList.add('hide');
-      setTimeout(() => { el.classList.remove('show','hide'); resolve(); }, 400);
-    }, 1600);
-  });
-}
-
-// Promiseベースのターン通知（表示が終わるまで待てる）
-function showTurnAnnounceAsync() {
-  return new Promise(resolve => {
-    const el = q('turn-announce');
-    if (!el) { resolve(); return; }
-    el.classList.add('show');
-    setTimeout(() => {
-      el.classList.remove('show');
-      resolve();
-    }, 1600);
-  });
-}
-
-// renderGame から呼ぶ非同期なし版（後方互換・何もしない）
-function showTurnAnnounce() {}
-
+/**
+ * 概要: ゲーム終了後に結果画面を表示する。
+ * 詳細:
+ *   - 勝者名を rwn 要素に表示する（引き分けや全員脱落にも対応）
+ *   - 各プレイヤーの最終手札を表示する
+ *     （手札が空＝脱落の場合は捨て札の最後のカードを代わりに表示）
+ *   - Firebase から最新の勝敗記録を取得して累計成績を表示する
+ * @param {Object} gs - ゲーム状態
+ */
 function showResult(gs) {
   setTimeout(() => {
     showScreen('result-screen');
@@ -1551,9 +1826,10 @@ function showResult(gs) {
     q('rwn').textContent = wn.length === 1
       ? `🏆 ${wn[0]} の勝利！`
       : wn.length > 1 ? `${wn.join(' と ')} が引き分け` : '全員脱落';
+
+    // 手札表示（脱落者は最後の捨て札を表示）
     q('rhands').innerHTML = gs.players.map(p => {
-      const w = wi.includes(p.id);
-      // 手札 + 最後に持っていたカード（捨て札の最後）を合わせて表示
+      const w     = wi.includes(p.id);
       const cards = p.hand.length > 0
         ? p.hand
         : (p.discards.length > 0 ? [p.discards[p.discards.length - 1]] : []);
@@ -1565,17 +1841,17 @@ function showResult(gs) {
         <div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap">${cardsHTML}</div>
       </div>`;
     }).join('');
-    // 累計成績を表示（Firebaseから取得）
+
+    // 累計成績を Firebase から取得して表示
     getRoom(roomCode).then(snap => {
       if (!snap.exists()) return;
-      const stats = snap.val().stats || {};
-      const statsEl = q('result-stats');
+      const stats  = snap.val().stats || {};
+      const statsEl= q('result-stats');
       if (!statsEl) return;
-      const players = gs.players;
-      statsEl.innerHTML = players.map(p => {
-        const st = stats[p.uid] || { wins: 0, draws: 0, losses: 0 };
+      statsEl.innerHTML = gs.players.map(p => {
+        const st    = stats[p.uid] || { wins:0, draws:0, losses:0 };
         const total = (st.wins||0) + (st.draws||0) + (st.losses||0);
-        const rate = total > 0 ? Math.round((st.wins||0) / total * 100) : 0;
+        const rate  = total > 0 ? Math.round((st.wins||0) / total * 100) : 0;
         return `<div class="rstat-card">
           <div class="rstat-name">${p.name}</div>
           <div class="rstat-nums">
@@ -1591,30 +1867,146 @@ function showResult(gs) {
   }, 700);
 }
 
-/* ═══════════════════════════════════════
-   カードHTML
-═══════════════════════════════════════ */
+// ================================================================
+// カード HTML 生成ヘルパー
+// ================================================================
+
+/**
+ * 概要: カード内部の HTML（ランク・名前・効果テキスト）を生成する。
+ * @param {Object}  c    - カードオブジェクト {rank, id}
+ * @param {boolean} mini - true の場合は効果テキストを省略（捨て札の小カード用）
+ * @returns {string} カード内部の HTML 文字列
+ */
 function cardInner(c, mini = false) {
   return `<div class="ci">
     <div class="cr">${c.rank}</div>
-    <div class="cn">${CD[c.rank].name}</div>
-    ${mini ? '' : `<div class="ce">${CD[c.rank].eff}</div>`}
+    <div class="cn">${CD[c.rank]?.name ?? ''}</div>
+    ${mini ? '' : `<div class="ce">${CD[c.rank]?.eff ?? ''}</div>`}
   </div>`;
 }
+
+/**
+ * 概要: カード全体の HTML（外枠 + 内部）を生成する。
+ * @param {Object}  c     - カードオブジェクト
+ * @param {boolean} large - true の場合は標準サイズ、false は小サイズ
+ * @returns {string} カード全体の HTML 文字列
+ */
 function cardHTML(c, large = false) {
   const s = large ? 'width:var(--cw);height:var(--ch)' : 'width:44px;height:64px';
   return `<div class="hc c${c.rank}" style="${s};border-radius:6px;border:1px solid">${cardInner(c)}</div>`;
 }
 
-/* ═══════════════════════════════════════
-   モーダル
-═══════════════════════════════════════ */
-// 効果を受ける側に手札を見せる（選択ボタンなし）
+// ================================================================
+// 通知系ユーティリティ
+// ================================================================
+
+/**
+ * 概要: 「あなたのターンです」通知を画面中央に表示する（Promise）。
+ * 詳細: turn-announce 要素に 'show' クラスを付与してアニメーションを開始し、
+ *       1.6秒後に 'show' を外して Promise を resolve する。
+ *       execDraw() が await して待機することでドロー前に必ず表示される。
+ * @returns {Promise<void>} 通知アニメーション完了まで待機
+ */
+function showTurnAnnounceAsync() {
+  return new Promise(resolve => {
+    const el = q('turn-announce');
+    if (!el) { resolve(); return; }
+    el.classList.add('show');
+    setTimeout(() => { el.classList.remove('show'); resolve(); }, 1600);
+  });
+}
+
+/**
+ * 概要: カード出し通知を画面中央に表示する（Promise）。
+ * 詳細:
+ *   - msg が null の場合: 「playerName が「X カード名」を出しました」を自動生成
+ *   - msg に文字列を渡した場合: そのままラベルに表示（死神・兵士・少年効果など）
+ *   - 1.6秒表示後に fade-out アニメーション(0.4秒)を経てから resolve する
+ * @param {string}      playerName - 出したプレイヤー名
+ * @param {Object}      card       - 表示するカードオブジェクト {rank, id}
+ * @param {string|null} msg        - 表示するメッセージ（null の場合は自動生成）
+ * @returns {Promise<void>} 通知アニメーション完了まで待機
+ */
+function showCardAnnounceAsync(playerName, card, msg = null) {
+  return new Promise(resolve => {
+    const el    = q('card-announce');
+    const label = q('card-announce-label');
+    const cCard = q('card-announce-card');
+    if (!el) { resolve(); return; }
+    label.textContent = msg !== null
+      ? msg
+      : `${playerName} が「${card.rank} ${CD[card.rank]?.name ?? ''}」を出しました`;
+    cCard.innerHTML = `<div class="hc c${card.rank}" style="width:100px;height:144px;border-radius:10px;border:1px solid;cursor:default">${cardInner(card)}</div>`;
+    el.classList.remove('hide');
+    el.classList.add('show');
+    setTimeout(() => {
+      el.classList.add('hide');
+      setTimeout(() => { el.classList.remove('show', 'hide'); resolve(); }, 400);
+    }, 1600);
+  });
+}
+
+/**
+ * 概要: 守護発動通知を画面中央に表示する（Promise）。
+ * 詳細: card-announce 要素を流用して乙女カード(4)と守護発動メッセージを表示する。
+ *       showCardAnnounceAsync と同じアニメーション構成。
+ * @param {string} targetName - 守護を発動したプレイヤー名
+ * @returns {Promise<void>} 通知アニメーション完了まで待機
+ */
+function showGuardianAnnounceAsync(targetName) {
+  return new Promise(resolve => {
+    const el    = q('card-announce');
+    const label = q('card-announce-label');
+    const cCard = q('card-announce-card');
+    if (!el) { resolve(); return; }
+    label.textContent = `🛡 ${targetName} の守護が発動！効果を無効にしました`;
+    cCard.innerHTML   = `<div class="hc c4" style="width:100px;height:144px;border-radius:10px;border:1px solid;cursor:default">${cardInner({rank:4})}</div>`;
+    el.classList.remove('hide');
+    el.classList.add('show');
+    setTimeout(() => {
+      el.classList.add('hide');
+      setTimeout(() => { el.classList.remove('show', 'hide'); resolve(); }, 400);
+    }, 1600);
+  });
+}
+
+// ================================================================
+// モーダル管理
+// ================================================================
+
+/**
+ * 概要: 汎用モーダルを表示する。
+ * 詳細: title・text・body の各要素を設定してから
+ *       'mov' 要素に 'on' クラスを付与して表示する。
+ *       モーダル内のボタンや要素は body の innerHTML として注入されるため、
+ *       表示後に getElementById / addEventListener で動的にリスナーを付与する。
+ * @param {string} title - モーダルタイトル
+ * @param {string} text  - 説明テキスト
+ * @param {string} body  - モーダル本体 HTML
+ */
+function showModal(title, text, body) {
+  q('mt').textContent  = title;
+  q('mtx').textContent = text;
+  q('mbd').innerHTML   = body;
+  q('mov').classList.add('on');
+}
+
+/** モーダルを閉じる（'on' クラスを除去） */
+function closeModal() { q('mov').classList.remove('on'); }
+
+/**
+ * 概要: 効果を受ける側（ターゲット）に手札を見せる見るだけモーダルを表示する。
+ * 詳細:
+ *   - blind=false（皇帝・少年）: 実際の手札カードを表示する
+ *   - blind=true（死神）: ?/? を表示して中身を隠す（盲目選択ルール）
+ *   - _revealModalOpen フラグを true にすることで、
+ *     フェーズ変化時の自動クローズ（onGsReceived 内）の対象となる
+ * @param {Object} ri - revealInfo オブジェクト
+ */
 function showRevealModal(ri) {
   _revealModalOpen = true;
   let cardsHTML;
   if (ri.blind) {
-    // 死神：盲目なので?/?を表示
     cardsHTML = `
       <div class="blnd" style="cursor:default"><div class="ci"><div class="cr" style="color:var(--dim)">?</div><div class="cn" style="color:var(--dim)">左</div></div></div>
       <div class="blnd" style="cursor:default"><div class="ci"><div class="cr" style="color:var(--dim)">?</div><div class="cn" style="color:var(--dim)">右</div></div></div>`;
@@ -1623,9 +2015,7 @@ function showRevealModal(ri) {
       `<div class="hc c${card.rank}" style="width:var(--cw);height:var(--ch);border-radius:8px;border:1px solid;cursor:default">${cardInner(card)}</div>`
     ).join('');
   }
-  showModal(
-    ri.title,
-    ri.desc,
+  showModal(ri.title, ri.desc,
     `<div class="mch" style="justify-content:center">${cardsHTML}</div>
      <div style="font-size:10px;color:var(--dim);text-align:center;font-family:'Cinzel',serif;letter-spacing:1px">
        ${ri.blind ? '相手がどちらかを選んでいます...' : 'どちらかが捨てられます'}
@@ -1633,48 +2023,23 @@ function showRevealModal(ri) {
   );
 }
 
-function showModal(title, text, body) {
-  q('mt').textContent  = title;
-  q('mtx').textContent = text;
-  q('mbd').innerHTML   = body;
-  q('mov').classList.add('on');
-}
-function closeModal() { q('mov').classList.remove('on'); }
-
-// 共通処理: tgt に1枚引かせ → 両者に手札公開 → 出す側がどちらか選択
-// emperor/boy は手札公開あり（公開処刑）
-// reaper は手札をシャッフルして盲目選択（公開なし）
-async function drawAndRevealThenPick(gs, actor, tgt, effectTitle, pickTitle, pickCb) {
-  if (!gs.deck.length) { addLog(gs, '山札なし', 'act'); await endTurn(gs); return; }
-  // 1枚引かせる
-  tgt.hand.push(gs.deck.shift());
-  addLog(gs, `${tgt.name} が山札から引きました（${effectTitle}）。`, 'act');
-  // 公開フェーズ：gsにカード情報を載せてFirebase経由で受ける側にも表示
-  const revealSeq = (gs.seq || 0) + 1;
-  gs.revealInfo = {
-    title: `${effectTitle} - ${tgt.name} の手札`,
-    desc: `${actor.name} がどちらかを捨てさせます`,
-    cards: [...tgt.hand], // 現在の手札（元の手札 + 引いたカード）
-    targetUid: tgt.uid,
-    actorUid: actor.uid,
-    revealSeq,
-  };
-  gs.phase = 'reveal-cards';
-  await pushGS(gs);
-  renderGame(gs);
-  // 出す側はpickCardで選択
-  pickCard(pickTitle, '捨てさせるカードを選んでください。', tgt.hand, pickCb);
-}
-
-// pickTarget: 守護状態のプレイヤーも表示（選択可能）
-// 守護状態の相手を選んだら守護発動通知を出してendTurn
-// targets = 守護でないプレイヤーのリスト（既存のfilterを維持）
-// allTargets = 守護含む全ターゲット（gs から生成）
+/**
+ * 概要: ターゲット選択モーダルを表示する。
+ * 詳細:
+ *   - 守護状態のプレイヤーも選択肢に含める（🛡マーク・青ハイライトで表示）
+ *   - 守護状態のプレイヤーを選択した場合:
+ *     守護発動通知を Firebase 経由で両者に送り、endTurn() を呼ぶ
+ *   - 守護でないプレイヤーを選択した場合: cb(tgt) を呼んで効果処理へ進む
+ * @param {string}   title   - モーダルタイトル
+ * @param {string}   text    - 説明テキスト
+ * @param {Array}    targets - 対象プレイヤー配列（対象なし判定用）
+ * @param {Function} cb      - 選択されたターゲットを引数に取るコールバック
+ */
 function pickTarget(title, text, targets, cb) {
-  // 守護状態のプレイヤーも含めた全ターゲットを生成
-  const actor = lastGS.players[lastGS.currentTurn];
+  // 自分以外の全生存者を表示（守護含む）
+  const actor      = lastGS.players[lastGS.currentTurn];
   const allTargets = alivePlayers(lastGS).filter(p => p.id !== actor?.id);
-  const html = allTargets.map(t => {
+  const html       = allTargets.map(t => {
     const isProt = t.protected;
     return `<div class="tg${isProt ? ' prot' : ''}" data-id="${t.id}" data-prot="${isProt ? 1 : 0}">
       ${isProt ? '🛡 ' : ''}${t.name}${isProt ? ' (守護中)' : ''}
@@ -1683,37 +2048,43 @@ function pickTarget(title, text, targets, cb) {
   showModal(title, text, `<div class="mtgts">${html}</div>`);
   q('mbd').querySelectorAll('.tg').forEach(el => {
     el.addEventListener('click', async () => {
-      const tgt = lastGS.players[+el.dataset.id];
+      const tgt    = lastGS.players[+el.dataset.id];
       const isProt = el.dataset.prot === '1';
       closeModal();
       if (isProt) {
-        // 守護発動：card-announce と同じ仕組みで両者に通知
-        const gs = deepCopy(lastGS);
+        // 守護発動: card-announce フェーズで両者に通知
+        const gs  = deepCopy(lastGS);
         const act = gs.players[gs.currentTurn];
         addLog(gs, `${tgt.name} の守護が発動！${act.name} の効果を無効にしました。`, 'act');
-        // lastPlayedCard に守護フラグを立てて card-announce フェーズで通知
         gs.lastPlayedCard = {
           rank: 4, id: -99,
-          playerName: act.name,
-          customMsg: null,
-          isGuardian: true,
+          playerName: act.name, customMsg: null,
+          isGuardian:   true,
           guardianTarget: tgt.name,
           notifySeq: (gs.seq || 0) + 1,
         };
         gs.phase = 'card-announce';
-        // 自分は先に表示
-        const announceP = showGuardianAnnounceAsync(tgt.name);
-        await pushGS(gs);   // 相手のリスナーに届く
-        await announceP;    // 自分の通知が終わるまで待つ
+        const announceP = showGuardianAnnounceAsync(tgt.name); // 自分は即時表示
+        await pushGS(gs);   // Firebase 書き込み → 相手も onGsReceived 経由で表示
+        await announceP;    // 自分の通知アニメーション完了を待つ
         gs.phase = 'effect-pending';
         await endTurn(gs);
       } else {
         cb(tgt);
       }
-    }, { once: true });
+    }, { once:true });
   });
 }
 
+/**
+ * 概要: カード選択モーダルを表示する（捨てさせるカードの選択用）。
+ * 詳細: cards 配列を表示し、選択したカードのインデックスを cb に渡す。
+ *       「捨てさせる」ボタンは選択後に有効化される。
+ * @param {string}   title - モーダルタイトル
+ * @param {string}   text  - 説明テキスト
+ * @param {Array}    cards - 選択肢となるカード配列
+ * @param {Function} cb    - 選択されたカードインデックスを引数に取るコールバック
+ */
 function pickCard(title, text, cards, cb) {
   let sel = null;
   showModal(title, text,
@@ -1726,25 +2097,79 @@ function pickCard(title, text, cards, cb) {
     el.addEventListener('click', () => {
       q('mbd').querySelectorAll('.mcc').forEach(e => e.classList.remove('on'));
       el.classList.add('on');
-      sel = +el.dataset.ci;
-      q('_ccok').disabled = false;
+      sel = +el.dataset.ci; q('_ccok').disabled = false;
     });
   });
   q('_ccok').addEventListener('click', () => {
     if (sel === null) return;
-    closeModal();
-    cb(sel);
-  }, { once: true });
+    closeModal(); cb(sel);
+  }, { once:true });
 }
 
-/* ═══════════════════════════════════════
-   ユーティリティ
-═══════════════════════════════════════ */
-function q(id)       { return document.getElementById(id); }
+/**
+ * 概要: 手札を引かせてから両者に公開し、選択させる（皇帝・少年効果共通）。
+ * 詳細:
+ *   1. tgt の手札に山札から1枚追加する
+ *   2. revealInfo を gs に設定して 'reveal-cards' フェーズで Firebase に書き込む
+ *      → ターゲット側のリスナーが発火して showRevealModal() が呼ばれる
+ *   3. 出す側に pickCard() でカード選択モーダルを表示する
+ *      （ターゲットは選択できず、見るだけ）
+ * @param {Object}   gs          - ゲーム状態
+ * @param {Object}   actor       - 効果を出したプレイヤー
+ * @param {Object}   tgt         - 対象プレイヤー
+ * @param {string}   effectTitle - 効果名（ログ・モーダルタイトルに使用）
+ * @param {string}   pickTitle   - pickCard モーダルのタイトル
+ * @param {Function} pickCb      - 選択されたカードインデックスを引数に取るコールバック
+ */
+async function drawAndRevealThenPick(gs, actor, tgt, effectTitle, pickTitle, pickCb) {
+  if (!gs.deck.length) { addLog(gs,'山札なし','act'); await endTurn(gs); return; }
+  tgt.hand.push(gs.deck.shift());
+  addLog(gs, `${tgt.name} が山札から引きました（${effectTitle}）。`, 'act');
+
+  // revealInfo を設定して Firebase に書き込み、ターゲットに公開モーダルを送る
+  const revealSeq  = (gs.seq || 0) + 1;
+  gs.revealInfo    = {
+    title:    `${effectTitle} - ${tgt.name} の手札`,
+    desc:     `${actor.name} がどちらかを捨てさせます`,
+    cards:    [...tgt.hand], // 現在の手札（元の1枚 + 引いた1枚）
+    blind:    false,
+    targetUid: tgt.uid,
+    actorUid:  actor.uid,
+    revealSeq,
+  };
+  gs.phase = 'reveal-cards';
+  await pushGS(gs);
+  renderGame(gs);
+
+  // 出す側はカード選択モーダルを表示（ターゲットは showRevealModal が表示される）
+  pickCard(pickTitle, '捨てさせるカードを選んでください。', tgt.hand, pickCb);
+}
+
+// ================================================================
+// ユーティリティ
+// ================================================================
+
+/** 指定IDの DOM 要素を返す短縮ヘルパー */
+function q(id) { return document.getElementById(id); }
+
+/**
+ * 概要: 指定した画面を表示して他を非表示にする。
+ * 詳細: 'screen' クラスを持つ全要素から 'active' を外し、
+ *       指定した要素だけに 'active' を付与する。
+ * @param {string} id - 表示する画面要素の ID
+ */
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   q(id).classList.add('active');
 }
+
+/**
+ * 概要: 画面上部にトースト通知を表示する。
+ * 詳細: 'on' クラスを付与して表示し、2.8秒後に 'on' を外して非表示にする。
+ *       err=true の場合は赤いエラースタイルを適用する。
+ * @param {string}  msg - 表示するメッセージ
+ * @param {boolean} err - true の場合はエラースタイルを適用
+ */
 function toast(msg, err = false) {
   const t = q('toast');
   t.textContent = msg;
@@ -1752,65 +2177,85 @@ function toast(msg, err = false) {
   clearTimeout(window._tt);
   window._tt = setTimeout(() => t.classList.remove('on'), 2800);
 }
-async function leaveRoomCleanup() {
-  // Firebaseのプレイヤーリストから自分を削除してホストに通知
-  if (!roomCode || !myUid) return;
-  try {
-    const snap = await getRoom(roomCode);
-    if (!snap.exists()) return;
-    const room = snap.val();
-    const players = Array.isArray(room.players)
-      ? room.players : Object.values(room.players);
-    const remaining = players.filter(p => p.uid !== myUid);
-    if (remaining.length === 0) {
-      // 自分が最後の一人ならルームごと削除
-      await setField(`rooms/${roomCode}`, null);
-    } else {
-      // pid を振り直して保存
-      const reIndexed = remaining.map((p, i) => ({ ...p, pid: i }));
-      await setField(`rooms/${roomCode}/players`, reIndexed);
-      // ホストが抜けた場合は次の人がホストになる
-      if (room.hostUid === myUid && reIndexed.length > 0) {
-        await setField(`rooms/${roomCode}/hostUid`, reIndexed[0].uid);
-      }
-    }
-  } catch(e) {
-    console.error('leaveRoomCleanup error:', e);
-  }
-}
 
+/**
+ * 概要: ルームから退出してタイトル画面に戻る。
+ * 詳細:
+ *   1. Firebase リスナーを解除する
+ *   2. leaveRoomCleanup() で自分をプレイヤーリストから削除する
+ *      （roomCode をリセットする前に await することで削除が確実に完了する）
+ *   3. 全クライアント変数をリセットしてタイトル画面に遷移する
+ */
 async function backToTitle() {
   if (unsubRoom) { unsubRoom(); unsubRoom = null; }
-  // roomCode をリセットする前に削除処理を完了させる
   if (roomCode) await leaveRoomCleanup();
   logLen = 0; pickedIdx = null; localReady = false;
-  processing = false; lastSeq = -1; _lastAnnouncedSeq = -1; _lastRevealSeq = -1; _revealModalOpen = false; _lastGuardianSeq = -1;
+  processing = false; lastSeq = -1;
+  _lastAnnouncedSeq = -1; _lastCardAnnounceSeq = -1;
+  _lastRevealSeq = -1; _revealModalOpen = false;
   roomCode = ''; isHost = false; myPid = null;
   showScreen('title-screen');
 }
 
-// 同じルームのロビーへ戻る（再戦）
+/**
+ * 概要: Firebase のプレイヤーリストから自分を削除する。
+ * 詳細:
+ *   - 自分以外の残りプレイヤーを pid を振り直して保存する
+ *   - 残りが0人なら rooms/{roomCode} ごと削除する
+ *   - 自分がホストで残りプレイヤーがいる場合は先頭プレイヤーをホストに昇格させる
+ */
+async function leaveRoomCleanup() {
+  if (!roomCode || !myUid) return;
+  try {
+    const snap = await getRoom(roomCode);
+    if (!snap.exists()) return;
+    const room      = snap.val();
+    const players   = Array.isArray(room.players) ? room.players : Object.values(room.players);
+    const remaining = players.filter(p => p.uid !== myUid);
+    if (remaining.length === 0) {
+      // 自分が最後の一人なのでルームごと削除
+      await setField(`rooms/${roomCode}`, null);
+    } else {
+      // pid を 0 から振り直して保存（pidの歯抜けを防ぐ）
+      const reIndexed = remaining.map((p, i) => ({ ...p, pid:i }));
+      await setField(`rooms/${roomCode}/players`, reIndexed);
+      // ホストが抜けた場合は先頭プレイヤーをホストに昇格
+      if (room.hostUid === myUid) {
+        await setField(`rooms/${roomCode}/hostUid`, reIndexed[0].uid);
+      }
+    }
+  } catch(e) { console.error('leaveRoomCleanup error:', e); }
+}
+
+/**
+ * 概要: ゲーム終了後に同じルームのロビーへ戻る（再戦）。
+ * 詳細:
+ *   - ゲーム状態をリセットした状態でロビーに戻るため、
+ *     gsJson=null、status='lobby'、全員 ready=false を Firebase に書き込む
+ *   - backToTitle と異なり自分はルームに残るので leaveRoomCleanup() は呼ばない
+ *   - Firebase リスナーを再設定して再びロビー更新を受け取れるようにする
+ */
 async function backToLobby() {
   try {
     logLen = 0; pickedIdx = null; processing = false;
-    lastSeq = -1; _lastAnnouncedSeq = -1; lastGS = null;
+    lastSeq = -1; _lastAnnouncedSeq = -1; _lastRevealSeq = -1;
+    _revealModalOpen = false; lastGS = null;
 
-    // ルームをlobby状態にリセット（gsJsonクリア、全員ready=false）
-    const snap = await getRoom(roomCode);
+    const snap    = await getRoom(roomCode);
     if (!snap.exists()) { backToTitle(); return; }
-    const room = snap.val();
-    const players = Array.isArray(room.players)
-      ? room.players : Object.values(room.players);
-    // 全員のready状態をリセット
-    const resetPlayers = players.map(p => ({ ...p, ready: false }));
-    await setField(`rooms/${roomCode}/status`, 'lobby');
-    await setField(`rooms/${roomCode}/gsJson`, null);
-    await setField(`rooms/${roomCode}/players`, resetPlayers);
-    // ホスト判定を維持
-    isHost = room.hostUid === myUid;
+    const room    = snap.val();
+    const players = Array.isArray(room.players) ? room.players : Object.values(room.players);
+    const resetPlayers = players.map(p => ({ ...p, ready:false }));
+
+    await setField(`rooms/${roomCode}/status`,  'lobby');
+    await setField(`rooms/${roomCode}/gsJson`,   null);
+    await setField(`rooms/${roomCode}/players`,  resetPlayers);
+
+    isHost     = room.hostUid === myUid;
     localReady = false;
     showScreen('lobby-screen');
-    // リスナーは enterLobby で再設定済みなので再購読
+
+    // リスナーを再設定（ゲーム中に別のリスナー設定になっている場合があるため）
     if (unsubRoom) { unsubRoom(); unsubRoom = null; }
     unsubRoom = listenRoom(roomCode, snap2 => {
       if (!snap2.exists()) { backToTitle(); return; }
@@ -1830,9 +2275,12 @@ async function backToLobby() {
   }
 }
 
-/* ═══════════════════════════════════════
-   イベント登録
-═══════════════════════════════════════ */
+// ================================================================
+// イベントリスナー登録
+// 概要: DOMContentLoaded 後に各ボタンのクリックイベントを登録する。
+// 詳細: type="module" スクリプトはDOMの読み込み後に実行されるが、
+//       DOMContentLoaded 内で登録することでより確実に要素を取得できる。
+// ================================================================
 document.addEventListener('DOMContentLoaded', () => {
   q('create-btn').addEventListener('click', createRoom);
   q('join-btn')  .addEventListener('click', joinRoom);
@@ -1849,6 +2297,7 @@ document.addEventListener('DOMContentLoaded', () => {
   q('join-code').addEventListener('keydown', e => { if (e.key === 'Enter') joinRoom(); });
 });
 
+// Firebase 初期化を実行
 init();
 </script>
 </body>
