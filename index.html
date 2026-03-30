@@ -553,6 +553,156 @@ import { getDatabase, ref, set, get, onValue }
 import { getAuth, signInAnonymously }
                           from "https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js";
 
+
+// ================================================================
+// 効果音エンジン（Web Audio API）
+// 概要: 外部ファイル不要でブラウザ内に音を合成して再生する。
+// 詳細: AudioContext はユーザー操作（クリック）後に初期化する。
+//       それ以前は sfx() を呼んでも無音で無視される。
+//       各効果音は oscillator + gainNode の組み合わせで波形を生成し、
+//       エンベロープ（attack/decay/release）で音量を制御する。
+// ================================================================
+let _ac = null; // AudioContext（ユーザー操作後に初期化）
+
+/** AudioContext をユーザー操作時に初期化（ブラウザのAutoplay制限対策） */
+function initAudio() {
+  if (_ac) return;
+  try { _ac = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+}
+
+/**
+ * 概要: 指定した設定で効果音を再生する汎用関数。
+ * @param {Array}  notes  - [{freq, dur, type, vol}] の配列（和音・連音対応）
+ * @param {number} delay  - 再生開始までの遅延（秒）
+ */
+function sfx(notes, delay = 0) {
+  if (!_ac) return;
+  const now = _ac.currentTime + delay;
+  notes.forEach(({ freq, dur = 0.15, type = 'sine', vol = 0.18, start = 0 }) => {
+    const osc  = _ac.createOscillator();
+    const gain = _ac.createGain();
+    osc.connect(gain);
+    gain.connect(_ac.destination);
+    osc.type      = type;
+    osc.frequency.setValueAtTime(freq, now + start);
+    gain.gain.setValueAtTime(0, now + start);
+    gain.gain.linearRampToValueAtTime(vol, now + start + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + start + dur);
+    osc.start(now + start);
+    osc.stop(now + start + dur + 0.05);
+  });
+}
+
+// ── 効果音プリセット ──
+
+/** カードドロー：シュルっとした紙の音 */
+function sfxDraw() {
+  sfx([
+    { freq:600, dur:0.06, type:'square', vol:0.06 },
+    { freq:800, dur:0.08, type:'triangle', vol:0.10, start:0.04 },
+    { freq:1000, dur:0.06, type:'sine', vol:0.08, start:0.08 },
+  ]);
+}
+
+/** カードを出す：コツンとした音 */
+function sfxPlay() {
+  sfx([
+    { freq:300, dur:0.05, type:'square', vol:0.12 },
+    { freq:500, dur:0.10, type:'triangle', vol:0.14, start:0.03 },
+  ]);
+}
+
+/** ターン移行：ポーンという柔らかい通知音 */
+function sfxTurn() {
+  sfx([
+    { freq:440, dur:0.20, type:'sine', vol:0.15 },
+    { freq:660, dur:0.20, type:'sine', vol:0.12, start:0.12 },
+  ]);
+}
+
+/** 守護発動：シールドを張るような低くて硬い音 */
+function sfxGuardian() {
+  sfx([
+    { freq:200, dur:0.30, type:'triangle', vol:0.18 },
+    { freq:300, dur:0.25, type:'triangle', vol:0.14, start:0.05 },
+    { freq:150, dur:0.40, type:'sine', vol:0.10, start:0.10 },
+  ]);
+}
+
+/** 捨て札（皇帝・死神・少年）：ドサっと落とすような低音 */
+function sfxDiscard() {
+  sfx([
+    { freq:180, dur:0.12, type:'square', vol:0.14 },
+    { freq:130, dur:0.20, type:'triangle', vol:0.16, start:0.08 },
+  ]);
+}
+
+/** 脱落：ずんっとした重い音 */
+function sfxEliminate() {
+  sfx([
+    { freq:220, dur:0.08, type:'square', vol:0.18 },
+    { freq:160, dur:0.15, type:'square', vol:0.14, start:0.06 },
+    { freq:110, dur:0.30, type:'triangle', vol:0.12, start:0.14 },
+  ]);
+}
+
+/** 転生：神秘的な上昇音 */
+function sfxRebirth() {
+  sfx([
+    { freq:330, dur:0.18, type:'sine', vol:0.14 },
+    { freq:440, dur:0.18, type:'sine', vol:0.14, start:0.10 },
+    { freq:550, dur:0.18, type:'sine', vol:0.14, start:0.20 },
+    { freq:660, dur:0.25, type:'sine', vol:0.16, start:0.30 },
+  ]);
+}
+
+/** 勝利：明るいファンファーレ */
+function sfxWin() {
+  sfx([
+    { freq:523, dur:0.15, type:'sine', vol:0.18 },         // C5
+    { freq:659, dur:0.15, type:'sine', vol:0.18, start:0.14 }, // E5
+    { freq:784, dur:0.15, type:'sine', vol:0.18, start:0.28 }, // G5
+    { freq:1047,dur:0.35, type:'sine', vol:0.20, start:0.42 }, // C6
+    { freq:784, dur:0.35, type:'sine', vol:0.14, start:0.42 }, // 和音
+  ]);
+}
+
+/** 敗北：暗く沈んでいく音 */
+function sfxLose() {
+  sfx([
+    { freq:330, dur:0.20, type:'triangle', vol:0.16 },
+    { freq:277, dur:0.20, type:'triangle', vol:0.14, start:0.18 },
+    { freq:220, dur:0.30, type:'triangle', vol:0.12, start:0.36 },
+    { freq:165, dur:0.40, type:'triangle', vol:0.10, start:0.54 },
+  ]);
+}
+
+/** 兵士的中：パシっと鋭い音 */
+function sfxHit() {
+  sfx([
+    { freq:800, dur:0.06, type:'square', vol:0.16 },
+    { freq:600, dur:0.10, type:'square', vol:0.12, start:0.04 },
+    { freq:400, dur:0.15, type:'triangle', vol:0.10, start:0.08 },
+  ]);
+}
+
+/** 占師透視：シュワーンという神秘的な音 */
+function sfxReveal() {
+  sfx([
+    { freq:880, dur:0.30, type:'sine', vol:0.10 },
+    { freq:1100,dur:0.30, type:'sine', vol:0.08, start:0.05 },
+    { freq:1320,dur:0.30, type:'sine', vol:0.06, start:0.10 },
+  ]);
+}
+
+/** モーダル表示：コポっとした柔らかい音 */
+function sfxModal() {
+  sfx([
+    { freq:700, dur:0.08, type:'sine', vol:0.10 },
+    { freq:900, dur:0.10, type:'sine', vol:0.08, start:0.06 },
+  ]);
+}
+
 // ================================================================
 // Firebase 設定
 // ================================================================
@@ -1071,6 +1221,7 @@ async function execDraw(gs) {
   p.hand.push(card);
   gs.phase = 'choose';
   addLog(gs, `${p.name} が山札からカードを引きました。`, 'act');
+  if (p.uid === myUid) sfxDraw(); // 自分がドローした時の効果音
   await pushGS(gs);
   renderGame(gs);
 }
@@ -1131,6 +1282,7 @@ async function playCard(handIndex) {
   pickedIdx    = null;
   q('cdsc').classList.remove('vis');
   addLog(gs, `${actor.name} が「${card.rank} ${CD[card.rank].name}」を出しました。`, 'act');
+  sfxPlay(); // カードを出した時の効果音
 
   // card-announce フェーズでカード通知を全員に送る
   gs.lastPlayedCard = {
@@ -1194,6 +1346,7 @@ async function fx皇帝(gs, actor) {
     await drawAndRevealThenPick(gs, actor, tgt, '公開処刑', `皇帝 - ${tgt.name} の手札`, async ci => {
       const disc = tgt.hand.splice(ci, 1)[0];
       tgt.discards.push(disc);
+      sfxDiscard(); // 捨て札の効果音
       addLog(gs, `${actor.name} が ${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」を捨てさせました。`, 'act');
       const msg = `皇帝の効果：${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」が捨てられました`;
       gs.lastPlayedCard = { rank:disc.rank, id:disc.id, playerName:'', customMsg:msg, isGuardian:false, notifySeq:(gs.seq||0)+1 };
@@ -1303,6 +1456,7 @@ async function fx死神(gs, actor) {
       closeModal();
       const disc = tgt.hand.splice(idx, 1)[0];
       tgt.discards.push(disc);
+      sfxDiscard(); // 捨て札の効果音
       addLog(gs, `${actor.name} が ${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」を捨てさせました（死神）。`, 'act');
       const msg = `死神の効果：${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」が捨てられました`;
       gs.lastPlayedCard = { rank:disc.rank, id:disc.id, playerName:'', customMsg:msg, isGuardian:false, notifySeq:(gs.seq||0)+1 };
@@ -1345,6 +1499,7 @@ async function fx占師(gs, actor) {
   await pushGS(gs); renderGame(gs);
   pickTarget('占師 - 透視', '手札を覗く相手を指名してください', targets, async tgt => {
     addLog(gs, `${actor.name} が ${tgt.name} の手札を確認しました。`, 'act');
+    sfxReveal(); // 透視の効果音
     showModal('占師 - 透視結果', `${tgt.name} の手札を確認しました。`,
       `<div class="pbox">${cardHTML(tgt.hand[0], true)}</div>
        <div class="pnote">この情報は他のプレイヤーに秘密にしてください</div>
@@ -1401,6 +1556,7 @@ async function fx兵士(gs, actor) {
       gs.phase = 'effect-pending';
 
       if (isHit) {
+        sfxHit(); // 兵士的中の効果音
         addLog(gs, `正解！${tgt.name} の手札は ${actual}${CD[actual].name}。脱落！`, 'elim');
         if (actual === 10) elimRebirth(gs, tgt); else eliminate(gs, tgt, true);
       } else {
@@ -1435,6 +1591,7 @@ async function fx少年(gs, actor) {
       await drawAndRevealThenPick(gs, actor, tgt, '少年・公開処刑', `少年 - ${tgt.name} の手札（英雄なら転生可）`, async ci => {
         const disc = tgt.hand.splice(ci, 1)[0];
         tgt.discards.push(disc);
+        sfxDiscard(); // 捨て札の効果音
         addLog(gs, `${actor.name} が ${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」を捨てさせました（少年）。`, 'act');
         const msg = `少年の効果：${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」が捨てられました`;
         gs.lastPlayedCard = { rank:disc.rank, id:disc.id, playerName:'', customMsg:msg, isGuardian:false, notifySeq:(gs.seq||0)+1 };
@@ -1524,6 +1681,8 @@ function eliminate(gs, p) {
   p.eliminated = true;
   const cards = p.hand.map(c => `${c.rank}${CD[c.rank].name}`).join(',');
   if (cards) addLog(gs, `${p.name} 脱落。手札: ${cards}`, 'elim');
+  if (p.uid === myUid) sfxLose();  // 自分が脱落した時
+  else sfxEliminate();              // 相手が脱落した時
   p.discards.push(...p.hand);
   p.hand = [];
 }
@@ -1540,6 +1699,7 @@ function eliminate(gs, p) {
 function elimRebirth(gs, p) {
   if (!gs.rebirthUsed && gs.rebirthCard) {
     addLog(gs, `${p.name} の英雄が転生！`, 'imp');
+    sfxRebirth(); // 転生の効果音
     p.discards.push(...p.hand); p.hand = [];
     p.hand.push(gs.rebirthCard);
     gs.rebirthCard  = null;
@@ -1822,6 +1982,15 @@ function showResult(gs) {
     showScreen('result-screen');
     const wi = gs.winners || [];
     const wn = wi.map(id => gs.players[id].name);
+    // 勝敗に応じた効果音を再生
+    const myPlayer = gs.players.find(p => p.uid === myUid);
+    if (wi.length === 0) {
+      sfxLose(); // 全員脱落（引き分け）
+    } else if (myPlayer && wi.includes(myPlayer.id)) {
+      sfxWin();  // 自分が勝者
+    } else {
+      sfxLose(); // 自分が敗者
+    }
     q('rtl').textContent = '';
     q('rwn').textContent = wn.length === 1
       ? `🏆 ${wn[0]} の勝利！`
@@ -1911,6 +2080,7 @@ function showTurnAnnounceAsync() {
   return new Promise(resolve => {
     const el = q('turn-announce');
     if (!el) { resolve(); return; }
+    sfxTurn(); // ターン移行の効果音
     el.classList.add('show');
     setTimeout(() => { el.classList.remove('show'); resolve(); }, 1600);
   });
@@ -1959,6 +2129,7 @@ function showGuardianAnnounceAsync(targetName) {
     const label = q('card-announce-label');
     const cCard = q('card-announce-card');
     if (!el) { resolve(); return; }
+    sfxGuardian(); // 守護発動の効果音
     label.textContent = `🛡 ${targetName} の守護が発動！効果を無効にしました`;
     cCard.innerHTML   = `<div class="hc c4" style="width:100px;height:144px;border-radius:10px;border:1px solid;cursor:default">${cardInner({rank:4})}</div>`;
     el.classList.remove('hide');
@@ -1989,6 +2160,7 @@ function showModal(title, text, body) {
   q('mtx').textContent = text;
   q('mbd').innerHTML   = body;
   q('mov').classList.add('on');
+  sfxModal(); // モーダル表示の効果音
 }
 
 /** モーダルを閉じる（'on' クラスを除去） */
@@ -2282,6 +2454,9 @@ async function backToLobby() {
 //       DOMContentLoaded 内で登録することでより確実に要素を取得できる。
 // ================================================================
 document.addEventListener('DOMContentLoaded', () => {
+  // ユーザーの最初のインタラクションでAudioContextを初期化（ブラウザのAutoplay制限対策）
+  document.addEventListener('click', initAudio, { once: true });
+  document.addEventListener('touchstart', initAudio, { once: true });
   q('create-btn').addEventListener('click', createRoom);
   q('join-btn')  .addEventListener('click', joinRoom);
   q('ready-btn') .addEventListener('click', toggleReady);
