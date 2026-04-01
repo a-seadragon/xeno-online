@@ -170,7 +170,6 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 .lact{color:rgba(228,221,208,.65)}
 .lelim{color:var(--red-l)}.lelim .le-dot{color:var(--red-l);opacity:1}
 
-
 /* My area (bottom fixed) */
 .my-area{flex-shrink:0;
   background:linear-gradient(180deg,rgba(28,28,48,.95),rgba(10,10,20,.98));
@@ -324,53 +323,6 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 .card-announce-card{filter:drop-shadow(0 0 20px rgba(201,168,76,.4)) drop-shadow(0 8px 24px rgba(0,0,0,.8))}
 ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
-
-
-/* ── チャット ── */
-.chat-toggle{position:fixed;right:14px;bottom:150px;z-index:500;width:46px;height:46px;
-  border-radius:50%;background:linear-gradient(135deg,#c9a84c,#8a6820);border:none;
-  cursor:pointer;display:none;align-items:center;justify-content:center;font-size:20px;
-  box-shadow:0 4px 16px rgba(0,0,0,.5);transition:all .2s}
-.chat-toggle:hover{transform:scale(1.1)}
-.chat-unread{position:absolute;top:-4px;right:-4px;background:var(--red-l);color:#fff;
-  font-size:9px;font-family:'Cinzel',serif;padding:1px 5px;border-radius:8px;
-  min-width:16px;text-align:center;display:none}
-.chat-unread.on{display:block}
-.chat-panel{position:fixed;right:0;bottom:0;width:300px;height:400px;
-  background:var(--panel);border-left:1px solid var(--border);border-top:1px solid var(--border);
-  display:flex;flex-direction:column;z-index:499;
-  transform:translateX(100%);transition:transform .3s cubic-bezier(.4,0,.2,1);
-  box-shadow:-4px 0 24px rgba(0,0,0,.5)}
-.chat-panel.open{transform:translateX(0)}
-.chat-head{background:var(--panel2);border-bottom:1px solid var(--border);
-  padding:8px 12px;display:flex;align-items:center;gap:8px;flex-shrink:0}
-.chat-head-title{font-family:'Cinzel',serif;font-size:12px;color:var(--gold);letter-spacing:2px;flex:1}
-.chat-head-close{background:none;border:none;color:var(--dim);font-size:16px;
-  cursor:pointer;padding:2px 8px;border-radius:4px;line-height:1}
-.chat-head-close:hover{color:var(--text)}
-.chat-msgs{flex:1;overflow-y:auto;padding:8px 10px;display:flex;flex-direction:column;gap:5px}
-.chat-msg{display:flex;flex-direction:column;gap:2px;max-width:86%}
-.chat-msg.mine{align-self:flex-end;align-items:flex-end}
-.chat-msg.theirs{align-self:flex-start;align-items:flex-start}
-.chat-msg-name{font-family:'Cinzel',serif;font-size:8px;color:var(--dim);letter-spacing:1px}
-.chat-bubble{padding:6px 10px;border-radius:10px;font-size:12px;
-  font-family:'Noto Serif JP',serif;line-height:1.5;word-break:break-all}
-.chat-msg.mine  .chat-bubble{background:rgba(201,168,76,.18);color:var(--gold-l);
-  border-bottom-right-radius:3px;border:1px solid rgba(201,168,76,.25)}
-.chat-msg.theirs .chat-bubble{background:var(--panel2);color:var(--text);
-  border-bottom-left-radius:3px;border:1px solid var(--border)}
-.chat-msg-time{font-size:8px;color:var(--dim);opacity:.6;font-family:'Cinzel',serif}
-.chat-foot{border-top:1px solid var(--border);padding:8px 10px;display:flex;gap:6px;flex-shrink:0}
-.chat-inp{flex:1;background:#0a0a14;border:1px solid var(--border);color:var(--text);
-  padding:8px 10px;font-family:'Noto Serif JP',serif;font-size:12px;
-  border-radius:6px;outline:none;transition:border-color .2s}
-.chat-inp:focus{border-color:var(--gold)}
-.chat-inp::placeholder{color:var(--dim)}
-.chat-btn{background:linear-gradient(135deg,#c9a84c,#8a6820);border:none;color:#080810;
-  padding:0 14px;border-radius:6px;cursor:pointer;font-size:14px;font-weight:bold;
-  transition:all .2s;flex-shrink:0}
-.chat-btn:hover{background:linear-gradient(135deg,#f0d080,#c9a84c)}
-.chat-btn:disabled{opacity:.4;cursor:not-allowed}
 </style>
 </head>
 <body>
@@ -386,7 +338,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.3.2)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.3.1)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -464,7 +416,6 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
       <div class="rebirth-lbl">転生</div>
     </div>
     <div class="log-col" id="glog"></div>
-
   </div>
   <!-- My area (fixed bottom) -->
   <div class="my-area">
@@ -570,22 +521,6 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
     <div class="cdsc" id="cdsc"></div>
   </div>
 </div>
-
-<button class="chat-toggle" id="chat-toggle" title="チャット">
-  💬<span class="chat-unread" id="chat-unread"></span>
-</button>
-<div class="chat-panel" id="chat-panel">
-  <div class="chat-head">
-    <div class="chat-head-title">💬 チャット</div>
-    <button class="chat-head-close" id="chat-close">×</button>
-  </div>
-  <div class="chat-msgs" id="chat-msgs"></div>
-  <div class="chat-foot">
-    <input class="chat-inp" id="chat-inp" placeholder="メッセージを入力..." maxlength="100">
-    <button class="chat-btn" id="chat-send">➤</button>
-  </div>
-</div>
-
 <script type="module">
 /**
  * ================================================================
@@ -613,7 +548,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 
 // ── Firebase SDK インポート ──
 import { initializeApp }  from "https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js";
-import { getDatabase, ref, set, get, onValue, push, query, limitToLast, orderByKey }
+import { getDatabase, ref, set, get, onValue }
                           from "https://www.gstatic.com/firebasejs/12.11.0/firebase-database.js";
 import { getAuth, signInAnonymously }
                           from "https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js";
@@ -793,22 +728,14 @@ let db, myUid;
 
 /** ゲーム状態オブジェクトを JSON 文字列として gsJson フィールドに保存 */
 const saveGS    = (rc, gs) => set(ref(db, `rooms/${rc}/gsJson`), JSON.stringify(gs));
+/** ルーム全体（ロビー情報含む）を一括保存 */
 const saveRoom  = (rc, d)  => set(ref(db, `rooms/${rc}`), d);
-const pushChat  = (rc, msg) => { const k=`${Date.now()}_${Math.random().toString(36).slice(2,7)}`; return set(ref(db,`rooms/${rc}/chat/${k}`),msg); };
-const listenChat= (rc, cb)  => onValue(ref(db, `rooms/${rc}/chat`), cb);
 /** ルーム全体を一度取得（Promise） */
 const getRoom   = rc       => get(ref(db, `rooms/${rc}`));
 /** 指定パスの単一フィールドを上書き */
 const setField  = (p, v)   => set(ref(db, p), v);
 /** 指定ルームの変更をリアルタイム監視。返り値は unsubscribe 関数 */
-const listenRoom  = (rc, cb) => onValue(ref(db, `rooms/${rc}`), cb);
-/** チャットの変更をリアルタイム監視。返り値は unsubscribe 関数 */
-const listenChat  = (rc, cb) => onValue(ref(db, `rooms/${rc}/chat`), cb);
-/** チャットメッセージを追記（push ではなくリスト末尾に追加） */
-const pushChat    = (rc, msg) => {
-  const key = `${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
-  return set(ref(db, `rooms/${rc}/chat/${key}`), msg);
-};
+const listenRoom= (rc, cb) => onValue(ref(db, `rooms/${rc}`), cb);
 
 // ================================================================
 // クライアント状態変数
@@ -829,7 +756,6 @@ const pushChat    = (rc, msg) => {
 let myPid = null, roomCode = '', isHost = false, localReady = false;
 let unsubRoom = null, lastGS = null, pickedIdx = null, logLen = 0;
 let processing = false, lastSeq = -1;
-let unsubChat = null, chatOpen = false, chatUnread = 0, chatKeys = new Set();
 
 // ================================================================
 // 通知系シーケンス管理変数
@@ -984,7 +910,6 @@ async function joinRoom() {
 function enterLobby() {
   q('code-disp').textContent = roomCode;
   showScreen('lobby-screen');
-  startChat();
   if (unsubRoom) unsubRoom();
   unsubRoom = listenRoom(roomCode, snap => {
     if (!snap.exists()) { backToTitle(); return; }
@@ -993,7 +918,6 @@ function enterLobby() {
       if (!q('game-screen').classList.contains('active')) {
         logLen = 0;
         showScreen('game-screen');
-        q('chat-toggle').style.display = 'flex'; // チャットボタンを表示
       }
       // gsJson は文字列 → JSON.parse で完全な配列構造を復元
       onGsReceived(JSON.parse(room.gsJson));
@@ -2436,7 +2360,6 @@ function toast(msg, err = false) {
  */
 async function backToTitle() {
   if (unsubRoom) { unsubRoom(); unsubRoom = null; }
-  stopChat();
   if (roomCode) await leaveRoomCleanup();
   logLen = 0; pickedIdx = null; localReady = false;
   processing = false; lastSeq = -1;
@@ -2489,10 +2412,6 @@ async function backToLobby() {
     logLen = 0; pickedIdx = null; processing = false;
     lastSeq = -1; _lastAnnouncedSeq = -1; _lastRevealSeq = -1;
     _revealModalOpen = false; lastGS = null;
-    // チャット表示をリセット（再戦時にリセット）
-    const chatEl = q('chat-msgs');
-    if (chatEl) chatEl.innerHTML = '';
-    chatKeys.clear();
 
     const snap    = await getRoom(roomCode);
     if (!snap.exists()) { backToTitle(); return; }
@@ -2507,7 +2426,6 @@ async function backToLobby() {
     isHost     = room.hostUid === myUid;
     localReady = false;
     showScreen('lobby-screen');
-    startChat();
 
     // リスナーを再設定（ゲーム中に別のリスナー設定になっている場合があるため）
     if (unsubRoom) { unsubRoom(); unsubRoom = null; }
@@ -2530,91 +2448,13 @@ async function backToLobby() {
 }
 
 // ================================================================
-// チャット機能
-// 概要: Firebase の rooms/{code}/chat にメッセージをリアルタイム同期。
+// イベントリスナー登録
+// 概要: DOMContentLoaded 後に各ボタンのクリックイベントを登録する。
+// 詳細: type="module" スクリプトはDOMの読み込み後に実行されるが、
+//       DOMContentLoaded 内で登録することでより確実に要素を取得できる。
 // ================================================================
-
-
-
-function escapeHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-function startChat() {
-  if (unsubChat) { unsubChat(); unsubChat = null; }
-  chatKeys.clear(); chatUnread = 0; chatOpen = false;
-  const toggle = q('chat-toggle');
-  if (toggle) toggle.style.display = 'flex';
-  const msgs = q('chat-msgs');
-  if (msgs) msgs.innerHTML = '';
-  unsubChat = listenChat(roomCode, snap => {
-    if (!snap.exists()) return;
-    const container = q('chat-msgs');
-    if (!container) return;
-    let hasNew = false;
-    Object.entries(snap.val())
-      .sort(([a],[b]) => a < b ? -1 : 1)
-      .forEach(([key, msg]) => {
-        if (chatKeys.has(key)) return;
-        chatKeys.add(key);
-        hasNew = true;
-        const isMe = msg.uid === myUid;
-        const el = document.createElement('div');
-        el.className = 'chat-msg ' + (isMe ? 'mine' : 'theirs');
-        const t = new Date(msg.ts).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
-        el.innerHTML = `<div class="chat-msg-name">${escapeHtml(msg.name)}</div>`
-          + `<div class="chat-bubble">${escapeHtml(msg.text)}</div>`
-          + `<div class="chat-msg-time">${t}</div>`;
-        container.appendChild(el);
-      });
-    if (hasNew) {
-      container.scrollTop = container.scrollHeight;
-      if (!chatOpen) {
-        chatUnread++;
-        const badge = q('chat-unread');
-        if (badge) { badge.textContent = chatUnread > 9 ? '9+' : String(chatUnread); badge.classList.add('on'); }
-        sfxModal();
-      }
-    }
-  });
-}
-
-function stopChat() {
-  if (unsubChat) { unsubChat(); unsubChat = null; }
-  chatKeys.clear(); chatUnread = 0; chatOpen = false;
-  const toggle = q('chat-toggle'); if (toggle) toggle.style.display = 'none';
-  const panel  = q('chat-panel');  if (panel)  panel.classList.remove('open');
-  const msgs   = q('chat-msgs');   if (msgs)   msgs.innerHTML = '';
-}
-
-function toggleChat() {
-  chatOpen = !chatOpen;
-  q('chat-panel').classList.toggle('open', chatOpen);
-  if (chatOpen) {
-    chatUnread = 0;
-    const badge = q('chat-unread');
-    if (badge) { badge.textContent = ''; badge.classList.remove('on'); }
-    const c = q('chat-msgs'); if (c) c.scrollTop = c.scrollHeight;
-    setTimeout(() => q('chat-inp')?.focus(), 200);
-  }
-}
-
-async function sendChatMsg() {
-  const input = q('chat-inp');
-  const text  = input?.value.trim();
-  if (!text || !roomCode) return;
-  input.value = '';
-  input.focus();
-  const btn = q('chat-send');
-  if (btn) btn.disabled = true;
-  try {
-    const name = lastGS?.players.find(p => p.uid === myUid)?.name || 'プレイヤー';
-    await pushChat(roomCode, { uid:myUid, name, text, ts:Date.now() });
-  } catch(e) { console.error('chat send error:', e); }
-  finally { if (btn) btn.disabled = false; }
-}
-
 document.addEventListener('DOMContentLoaded', () => {
+  // ユーザーの最初のインタラクションでAudioContextを初期化（ブラウザのAutoplay制限対策）
   document.addEventListener('click', initAudio, { once: true });
   document.addEventListener('touchstart', initAudio, { once: true });
   q('create-btn').addEventListener('click', createRoom);
@@ -2629,13 +2469,10 @@ document.addEventListener('DOMContentLoaded', () => {
       .then(() => toast('コードをコピーしました！'))
       .catch(() => toast(roomCode));
   });
-  q('join-code') .addEventListener('keydown', e => { if (e.key === 'Enter') joinRoom(); });
-  q('chat-toggle').addEventListener('click', toggleChat);
-  q('chat-close') .addEventListener('click', toggleChat);
-  q('chat-send')  .addEventListener('click', sendChatMsg);
-  q('chat-inp')   .addEventListener('keydown', e => { if (e.key === 'Enter') sendChatMsg(); });
+  q('join-code').addEventListener('keydown', e => { if (e.key === 'Enter') joinRoom(); });
 });
 
+// Firebase 初期化を実行
 init();
 </script>
 </body>
