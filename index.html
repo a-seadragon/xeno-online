@@ -377,7 +377,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.3.4)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.3.5)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -2537,6 +2537,7 @@ function stopChat() {
 function toggleChat() {
   chatOpen = !chatOpen;
   q('chat-panel').classList.toggle('open', chatOpen);
+  q('chat-toggle').style.display = chatOpen ? 'none' : 'flex';
   if (chatOpen) {
     chatUnread = 0;
     const badge = q('chat-unread');
