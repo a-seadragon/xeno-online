@@ -377,7 +377,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.3.6)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.3.7)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -788,14 +788,15 @@ function stopBgm() {
 function scheduleBgmLoop() {
   if (!_ac || !_bgmOn) return;
   const now  = _ac.currentTime;
-  const beat = 2.4; // 1音符の長さ（秒）
+  const beat = 2.0; // 1和音の長さ（秒）
 
-  // 神秘的な和音進行（Dm → Am → Bb → A）
+  // 明るく優雅な和音進行（C → G → Am → F）
+  // カードゲームらしい気品のある雰囲気
   const progression = [
-    [294, 370, 440],   // Dm (D4 F#4 A4)
-    [220, 277, 330],   // Am (A3 C#4 E4)
-    [233, 293, 349],   // Bb (Bb3 D4 F4)
-    [220, 277, 440],   // A  (A3 C#4 A4)
+    [262, 330, 392],   // C  (C4 E4 G4)
+    [392, 494, 587],   // G  (G4 B4 D5)
+    [220, 262, 330],   // Am (A3 C4 E4)
+    [349, 440, 523],   // F  (F4 A4 C5)
   ];
 
   progression.forEach((chord, ci) => {
@@ -806,21 +807,19 @@ function scheduleBgmLoop() {
       osc.connect(gain);
       gain.connect(_ac.destination);
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq * 0.5, t); // 1オクターブ下げて深みを出す
+      osc.frequency.setValueAtTime(freq, t);
       gain.gain.setValueAtTime(0, t);
-      gain.gain.linearRampToValueAtTime(0.04 - hi * 0.008, t + 0.3);  // フェードイン
-      gain.gain.linearRampToValueAtTime(0.04 - hi * 0.008, t + beat - 0.4);
-      gain.gain.linearRampToValueAtTime(0, t + beat);                  // フェードアウト
+      gain.gain.linearRampToValueAtTime(0.035 - hi * 0.007, t + 0.25); // フェードイン
+      gain.gain.linearRampToValueAtTime(0.035 - hi * 0.007, t + beat - 0.35);
+      gain.gain.linearRampToValueAtTime(0, t + beat);                   // フェードアウト
       osc.start(t);
       osc.stop(t + beat + 0.1);
       _bgmNodes.push(osc);
     });
   });
 
-  // 4和音分が終わったら次のループをスケジュール
   const loopDur = beat * progression.length;
   _bgmLoop = setTimeout(() => {
-    // 古いノードを解放
     _bgmNodes = _bgmNodes.filter(n => { try { return n.context.state !== 'closed'; } catch(e){ return false; } });
     scheduleBgmLoop();
   }, (loopDur - 0.2) * 1000);
