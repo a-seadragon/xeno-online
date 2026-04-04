@@ -377,7 +377,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.3.7)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.3.8)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -593,11 +593,7 @@ let _ac = null; // AudioContext（ユーザー操作後に初期化）
 /** AudioContext をユーザー操作時に初期化（ブラウザのAutoplay制限対策） */
 function initAudio() {
   if (_ac) return;
-  try {
-    _ac = new (window.AudioContext || window.webkitAudioContext)();
-    // タイトル画面表示中ならBGMを開始（初回インタラクション後に自動開始）
-    if (q('title-screen')?.classList.contains('active')) startBgm();
-  } catch(e) {}
+  try { _ac = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
 }
 
 /**
@@ -756,73 +752,6 @@ function sfxJoin() {
     { freq:440, dur:0.14, type:'sine', vol:0.14 },
     { freq:660, dur:0.20, type:'sine', vol:0.16, start:0.12 },
   ]);
-}
-
-// ── ホーム画面 BGM ──
-let _bgmNodes = []; // BGMの再生中ノード群
-let _bgmLoop  = null; // ループタイマー
-let _bgmOn    = false;
-
-/**
- * ホーム画面のアンビエントBGMを開始する。
- * 静かな和音をゆっくりフェードイン/アウトしながらループ再生する。
- */
-function startBgm() {
-  if (!_ac || _bgmOn) return;
-  _bgmOn = true;
-  scheduleBgmLoop();
-}
-
-/** BGMを停止してノードをすべて解放する */
-function stopBgm() {
-  _bgmOn = false;
-  if (_bgmLoop) { clearTimeout(_bgmLoop); _bgmLoop = null; }
-  _bgmNodes.forEach(n => { try { n.stop(); } catch(e){} });
-  _bgmNodes = [];
-}
-
-/**
- * BGM1ループ分を生成して次のループをスケジュールする。
- * XENOの世界観に合わせた短調・ゆったりしたアンビエント和音。
- */
-function scheduleBgmLoop() {
-  if (!_ac || !_bgmOn) return;
-  const now  = _ac.currentTime;
-  const beat = 2.0; // 1和音の長さ（秒）
-
-  // 明るく優雅な和音進行（C → G → Am → F）
-  // カードゲームらしい気品のある雰囲気
-  const progression = [
-    [262, 330, 392],   // C  (C4 E4 G4)
-    [392, 494, 587],   // G  (G4 B4 D5)
-    [220, 262, 330],   // Am (A3 C4 E4)
-    [349, 440, 523],   // F  (F4 A4 C5)
-  ];
-
-  progression.forEach((chord, ci) => {
-    const t = now + ci * beat;
-    chord.forEach((freq, hi) => {
-      const osc  = _ac.createOscillator();
-      const gain = _ac.createGain();
-      osc.connect(gain);
-      gain.connect(_ac.destination);
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq, t);
-      gain.gain.setValueAtTime(0, t);
-      gain.gain.linearRampToValueAtTime(0.035 - hi * 0.007, t + 0.25); // フェードイン
-      gain.gain.linearRampToValueAtTime(0.035 - hi * 0.007, t + beat - 0.35);
-      gain.gain.linearRampToValueAtTime(0, t + beat);                   // フェードアウト
-      osc.start(t);
-      osc.stop(t + beat + 0.1);
-      _bgmNodes.push(osc);
-    });
-  });
-
-  const loopDur = beat * progression.length;
-  _bgmLoop = setTimeout(() => {
-    _bgmNodes = _bgmNodes.filter(n => { try { return n.context.state !== 'closed'; } catch(e){ return false; } });
-    scheduleBgmLoop();
-  }, (loopDur - 0.2) * 1000);
 }
 
 // ================================================================
@@ -2457,8 +2386,6 @@ function q(id) { return document.getElementById(id); }
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   q(id).classList.add('active');
-  if (id === 'title-screen') startBgm();
-  else stopBgm();
 }
 
 /**
