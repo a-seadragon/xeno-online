@@ -380,7 +380,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.3.9)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.4.0)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -833,34 +833,274 @@ function sfxModal() {
   };
 
   /** 守護エフェクト（乙女）: 青い光の粒子がリング状に広がる */
+  // 守護エフェクト専用アニメーション
+  let guardianAnim = null;
+
   window.fxGuardian = function() {
-    const {x, y} = center();
-    // リング状に広がるパーティクル
-    spawn(x, y, {
-      count:   50,
-      speed:   8,
-      size:    4,
-      color:   ['#3498db','#5dade2','#85c1e9','#aed6f1','#ffffff'],
-      glow:    16,
-      decay:   0.016,
-      gravity: -0.02,  // 少し浮き上がる
-      friction:0.94,
-      upward:  0,
-    });
-    // 中心に残る光
-    setTimeout(() => {
-      spawn(x, y, {
-        count:   25,
-        speed:   3,
-        size:    6,
-        color:   ['#2471a3','#3498db','#7fb3d3'],
-        glow:    20,
-        decay:   0.012,
-        gravity: 0,
-        friction:0.90,
-      });
-    }, 100);
+    const cv  = canvas(); if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const cx  = cv.width  / 2;
+    const cy  = cv.height / 2;
+
+    // シールドリングアニメーション
+    let frame   = 0;
+    const total = 60; // フレーム数（約1秒）
+
+    if (guardianAnim) { cancelAnimationFrame(guardianAnim); guardianAnim = null; }
+
+    function drawShield() {
+      const t = frame / total;          // 0→1 の進行度
+      const easeOut = 1 - Math.pow(1 - t, 3);
+
+      // ── 外側リング ──
+      const maxR  = Math.min(cv.width, cv.height) * 0.32;
+      const r     = maxR * Math.min(easeOut * 1.4, 1.0);
+      const alpha = t < 0.6 ? 1.0 : 1.0 - (t - 0.6) / 0.4; // 後半でフェードアウト
+
+      ctx.save();
+
+      // シールドの光彩（外側）
+      const grd = ctx.createRadialGradient(cx, cy, r * 0.7, cx, cy, r + 18);
+      grd.addColorStop(0,   `rgba(82,190,255,0)`);
+      grd.addColorStop(0.5, `rgba(82,190,255,${0.18 * alpha})`);
+      grd.addColorStop(1,   `rgba(52,152,219,0)`);
+      ctx.beginPath();
+      ctx.arc(cx, cy, r + 18, 0, Math.PI * 2);
+      ctx.fillStyle = grd;
+      ctx.fill();
+
+      // メインリング
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(93,173,226,${0.9 * alpha})`;
+      ctx.lineWidth   = 3.5;
+      ctx.shadowColor = '#3498db';
+      ctx.shadowBlur  = 24 * alpha;
+      ctx.stroke();
+
+      // 内側リング（少し遅れて追従）
+      const r2 = r * 0.78;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r2, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(174,214,241,${0.5 * alpha})`;
+      ctx.lineWidth   = 1.5;
+      ctx.shadowBlur  = 12 * alpha;
+      ctx.stroke();
+
+      // リム上を流れる光の点
+      const dotCount = 8;
+      for (let i = 0; i < dotCount; i++) {
+        const angle = (Math.PI * 2 / dotCount) * i + (frame * 0.08);
+        const dx = cx + Math.cos(angle) * r;
+        const dy = cy + Math.sin(angle) * r;
+        ctx.beginPath();
+        ctx.arc(dx, dy, 4, 0, Math.PI * 2);
+        ctx.fillStyle   = `rgba(255,255,255,${0.85 * alpha})`;
+        ctx.shadowColor = '#ffffff';
+        ctx.shadowBlur  = 14;
+        ctx.fill();
+      }
+
+      // 中心の光点
+      if (t < 0.5) {
+        const cAlpha = (1 - t * 2) * alpha;
+        const cGrd = ctx.createRadialGradient(cx, cy, 0, cx, cy, 40);
+        cGrd.addColorStop(0,   `rgba(255,255,255,${0.6 * cAlpha})`);
+        cGrd.addColorStop(0.4, `rgba(93,173,226,${0.3 * cAlpha})`);
+        cGrd.addColorStop(1,   `rgba(52,152,219,0)`);
+        ctx.beginPath();
+        ctx.arc(cx, cy, 40, 0, Math.PI * 2);
+        ctx.fillStyle = cGrd;
+        ctx.shadowBlur = 0;
+        ctx.fill();
+      }
+
+      ctx.restore();
+      frame++;
+
+      if (frame <= total) {
+        guardianAnim = requestAnimationFrame(drawShield);
+      } else {
+        guardianAnim = null;
+        // パーティクルで残像
+        spawn(cx, cy, {
+          count:   30,
+          speed:   5,
+          size:    3,
+          color:   ['#3498db','#5dade2','#85c1e9','#aed6f1','#ffffff'],
+          glow:    14,
+          decay:   0.022,
+          gravity: -0.015,
+          friction:0.93,
+        });
+        if (!rafId) rafId = requestAnimationFrame(loop);
+      }
+    }
+
+    guardianAnim = requestAnimationFrame(drawShield);
   };
+
+  // 貴族エフェクト専用アニメーション
+  let duelAnim = null;
+
+  window.fxDuel = function(result) {
+    // result: 'left' | 'right' | 'draw'
+    const cv  = canvas(); if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const cx  = cv.width  / 2;
+    const cy  = cv.height / 2;
+
+    if (duelAnim) { cancelAnimationFrame(duelAnim); duelAnim = null; }
+
+    let frame = 0;
+    const APPROACH = 28;  // 接近フレーム
+    const CLASH    = 12;  // 衝突フレーム
+    const RESULT   = 30;  // 結果フレーム
+    const TOTAL    = APPROACH + CLASH + RESULT;
+
+    // 左右の光弾の色（ゴールド vs シルバー）
+    const colL = '#c9a84c';
+    const colR = '#aaaacc';
+
+    function drawDuel() {
+      const t = frame;
+      ctx.save();
+
+      if (t < APPROACH) {
+        // ── フェーズ1: 左右から光弾が中央へ接近 ──
+        const prog = t / APPROACH;           // 0→1
+        const ease = 1 - Math.pow(1 - prog, 2);
+        const dist = (1 - ease) * cx * 0.7; // 中央からの距離
+
+        // 左の光弾
+        const lx = cx - dist;
+        drawOrb(ctx, lx, cy, 14, colL, 28);
+        // 右の光弾
+        const rx = cx + dist;
+        drawOrb(ctx, rx, cy, 14, colR, 28);
+
+        // 軌跡
+        drawTrail(ctx, cx - dist - 30, cy, dist, colL);
+        drawTrailR(ctx, cx + dist + 30, cy, dist, colR);
+
+      } else if (t < APPROACH + CLASH) {
+        // ── フェーズ2: 衝突・衝撃波 ──
+        const prog = (t - APPROACH) / CLASH;
+        const shockR = prog * Math.min(cx, cy) * 0.6;
+        const alpha  = 1 - prog;
+
+        // 衝撃波リング
+        ctx.beginPath();
+        ctx.arc(cx, cy, shockR, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255,230,100,${alpha * 0.9})`;
+        ctx.lineWidth   = 6 * (1 - prog * 0.5);
+        ctx.shadowColor = '#ffdd00';
+        ctx.shadowBlur  = 30;
+        ctx.stroke();
+
+        // 内側リング
+        ctx.beginPath();
+        ctx.arc(cx, cy, shockR * 0.6, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255,255,255,${alpha * 0.6})`;
+        ctx.lineWidth   = 2;
+        ctx.shadowBlur  = 16;
+        ctx.stroke();
+
+        // 中心フラッシュ
+        const flashGrd = ctx.createRadialGradient(cx, cy, 0, cx, cy, 60 * (1 - prog));
+        flashGrd.addColorStop(0, `rgba(255,255,255,${alpha * 0.85})`);
+        flashGrd.addColorStop(0.4, `rgba(255,220,80,${alpha * 0.4})`);
+        flashGrd.addColorStop(1, `rgba(255,200,0,0)`);
+        ctx.beginPath();
+        ctx.arc(cx, cy, 60 * (1 - prog * 0.3), 0, Math.PI * 2);
+        ctx.fillStyle = flashGrd;
+        ctx.shadowBlur = 0;
+        ctx.fill();
+
+        if (t === APPROACH) {
+          // 衝突時にパーティクルを大量放出
+          const cols = ['#ffdd00','#ffaa00','#ffffff','#ff8800','#ffffaa'];
+          spawn(cx, cy, { count:55, speed:9, size:5, color:cols, glow:18, decay:0.02, gravity:0.04, upward:1 });
+          setTimeout(() => {
+            spawn(cx, cy, { count:25, speed:4, size:3, color:['#c9a84c','#ffffff','#ffd700'], glow:12, decay:0.028, gravity:0.06 });
+          }, 60);
+          // 結果によって色を変えたパーティクル
+          if (result === 'draw') {
+            spawn(cx, cy, { count:20, speed:6, size:4, color:['#e74c3c','#c0392b','#ff6b6b'], glow:14, decay:0.022, gravity:0.05, upward:0.5 });
+          }
+        }
+
+      } else {
+        // ── フェーズ3: 結果演出 ──
+        const prog  = (t - APPROACH - CLASH) / RESULT;
+        const alpha = 1 - prog;
+
+        if (result !== 'draw') {
+          // 勝者側に輝くオーラ
+          const winX = result === 'left' ? cx - cx * 0.4 : cx + cx * 0.4;
+          const aurR = 30 + prog * 20;
+          const aurGrd = ctx.createRadialGradient(winX, cy, 0, winX, cy, aurR);
+          aurGrd.addColorStop(0, `rgba(255,220,60,${alpha * 0.5})`);
+          aurGrd.addColorStop(1, `rgba(255,180,0,0)`);
+          ctx.beginPath();
+          ctx.arc(winX, cy, aurR, 0, Math.PI * 2);
+          ctx.fillStyle = aurGrd;
+          ctx.fill();
+        }
+      }
+
+      ctx.restore();
+      frame++;
+      if (frame <= TOTAL) {
+        duelAnim = requestAnimationFrame(drawDuel);
+      } else {
+        duelAnim = null;
+        if (!rafId) rafId = requestAnimationFrame(loop);
+      }
+    }
+
+    duelAnim = requestAnimationFrame(drawDuel);
+  };
+
+  function drawOrb(ctx, x, y, r, color, glowSize) {
+    const grd = ctx.createRadialGradient(x, y, 0, x, y, r);
+    grd.addColorStop(0,   'rgba(255,255,255,0.95)');
+    grd.addColorStop(0.3, color.replace(')', ',0.9)').replace('rgb', 'rgba'));
+    grd.addColorStop(1,   color.replace(')', ',0)').replace('rgb', 'rgba'));
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle   = grd;
+    ctx.shadowColor = color;
+    ctx.shadowBlur  = glowSize;
+    ctx.fill();
+  }
+
+  function drawTrail(ctx, startX, cy, dist, color) {
+    const grad = ctx.createLinearGradient(startX, cy, startX + dist, cy);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, color.replace(')', ',0.35)').replace('rgb','rgba'));
+    ctx.beginPath();
+    ctx.moveTo(startX, cy);
+    ctx.lineTo(startX + dist, cy);
+    ctx.strokeStyle = grad;
+    ctx.lineWidth   = 4;
+    ctx.shadowBlur  = 0;
+    ctx.stroke();
+  }
+
+  function drawTrailR(ctx, startX, cy, dist, color) {
+    const grad = ctx.createLinearGradient(startX, cy, startX - dist, cy);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, color.replace(')', ',0.35)').replace('rgb','rgba'));
+    ctx.beginPath();
+    ctx.moveTo(startX, cy);
+    ctx.lineTo(startX - dist, cy);
+    ctx.strokeStyle = grad;
+    ctx.lineWidth   = 4;
+    ctx.shadowBlur  = 0;
+    ctx.stroke();
+  }
+
 })();
 
 /** ボタン押下：明るいクリック音 */
@@ -944,6 +1184,7 @@ let myPid = null, roomCode = '', isHost = false, localReady = false;
 let unsubRoom = null, lastGS = null, pickedIdx = null, logLen = 0;
 let processing = false, lastSeq = -1;
 let unsubChat = null, chatOpen = false, chatUnread = 0, chatKeys = new Set();
+let resultShown = false; // 結果画面の二重表示防止
 
 // ================================================================
 // 通知系シーケンス管理変数
@@ -1298,7 +1539,10 @@ function onGsReceived(gs) {
 
   if (gs.gameOver) {
     renderGame(gs);
-    showResult(gs);
+    if (!resultShown) {
+      resultShown = true;
+      showResult(gs);
+    }
     return;
   }
 
@@ -1590,9 +1834,16 @@ async function fx貴族(gs, actor) {
   pickTarget('貴族 - 対決', '対決する相手を指名してください', targets, async tgt => {
     const aR = actor.hand[0]?.rank ?? 0, tR = tgt.hand[0]?.rank ?? 0;
     addLog(gs, `対決: ${actor.name}(${aR}) vs ${tgt.name}(${tR})`, 'act');
-    if      (aR < tR) { addLog(gs,`${actor.name} 脱落！`,'elim'); eliminate(gs,actor,true); }
-    else if (tR < aR) { addLog(gs,`${tgt.name} 脱落！`,'elim');   eliminate(gs,tgt,true); }
-    else              { addLog(gs,'相打ち！','elim'); eliminate(gs,actor,true); eliminate(gs,tgt,true); }
+    if      (aR < tR) {
+      fxDuel?.('right'); // tgt側（右）が勝利
+      addLog(gs,`${actor.name} 脱落！`,'elim'); eliminate(gs,actor,true);
+    } else if (tR < aR) {
+      fxDuel?.('left');  // actor側（左）が勝利
+      addLog(gs,`${tgt.name} 脱落！`,'elim');   eliminate(gs,tgt,true);
+    } else {
+      fxDuel?.('draw');  // 相打ち
+      addLog(gs,'相打ち！','elim'); eliminate(gs,actor,true); eliminate(gs,tgt,true);
+    }
     if (!checkWin(gs)) await endTurn(gs);
   });
 }
@@ -2556,6 +2807,7 @@ async function backToTitle() {
   processing = false; lastSeq = -1;
   _lastAnnouncedSeq = -1; _lastCardAnnounceSeq = -1;
   _lastRevealSeq = -1; _revealModalOpen = false;
+  resultShown = false;
   roomCode = ''; isHost = false; myPid = null;
   showScreen('title-screen');
 }
@@ -2602,7 +2854,7 @@ async function backToLobby() {
   try {
     logLen = 0; pickedIdx = null; processing = false;
     lastSeq = -1; _lastAnnouncedSeq = -1; _lastRevealSeq = -1;
-    _revealModalOpen = false; lastGS = null;
+    _revealModalOpen = false; lastGS = null; resultShown = false;
     const snap    = await getRoom(roomCode);
     if (!snap.exists()) { backToTitle(); return; }
     const room    = snap.val();
