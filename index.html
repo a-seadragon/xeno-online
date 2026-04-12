@@ -380,7 +380,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.4.0)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.4.1)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -1101,6 +1101,125 @@ function sfxModal() {
     ctx.stroke();
   }
 
+  // 占師エフェクト専用アニメーション
+  let revealAnim = null;
+
+  window.fxReveal = function() {
+    const cv  = canvas(); if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const cx  = cv.width  / 2;
+    const cy  = cv.height / 2;
+
+    if (revealAnim) { cancelAnimationFrame(revealAnim); revealAnim = null; }
+
+    let frame = 0;
+    const TOTAL = 70;
+
+    function draw() {
+      const t     = frame / TOTAL;       // 0→1
+      const easeIn = t * t;
+      ctx.save();
+
+      // ── 回転する星形のオーラリング ──
+      const maxR = Math.min(cx, cy) * 0.38;
+      const r    = maxR * Math.min(t * 2.2, 1.0);
+      const fade = t < 0.65 ? 1.0 : 1.0 - (t - 0.65) / 0.35;
+
+      // 外側グロー
+      const grdO = ctx.createRadialGradient(cx, cy, r * 0.6, cx, cy, r + 30);
+      grdO.addColorStop(0,   `rgba(180,120,255,0)`);
+      grdO.addColorStop(0.5, `rgba(160,80,240,${0.15 * fade})`);
+      grdO.addColorStop(1,   `rgba(100,20,180,0)`);
+      ctx.beginPath();
+      ctx.arc(cx, cy, r + 30, 0, Math.PI * 2);
+      ctx.fillStyle = grdO;
+      ctx.fill();
+
+      // メインリング
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(200,130,255,${0.85 * fade})`;
+      ctx.lineWidth   = 2.5;
+      ctx.shadowColor = '#b060ff';
+      ctx.shadowBlur  = 20 * fade;
+      ctx.stroke();
+
+      // ── 回転するシンボル点（6個）──
+      const dotR  = r * 0.85;
+      const speed = frame * 0.045;
+      for (let i = 0; i < 6; i++) {
+        const angle = (Math.PI * 2 / 6) * i + speed;
+        const px = cx + Math.cos(angle) * dotR;
+        const py = cy + Math.sin(angle) * dotR;
+        const sz = 3.5 + Math.sin(frame * 0.12 + i) * 1.5;
+        ctx.beginPath();
+        ctx.arc(px, py, sz, 0, Math.PI * 2);
+        ctx.fillStyle   = `rgba(230,180,255,${0.9 * fade})`;
+        ctx.shadowColor = '#cc88ff';
+        ctx.shadowBlur  = 12 * fade;
+        ctx.fill();
+      }
+
+      // ── 逆回転の内側三角形 ──
+      if (r > maxR * 0.3) {
+        const triR  = r * 0.45;
+        const tSpeed = -frame * 0.03;
+        ctx.beginPath();
+        for (let i = 0; i < 3; i++) {
+          const a = (Math.PI * 2 / 3) * i + tSpeed - Math.PI / 2;
+          const px = cx + Math.cos(a) * triR;
+          const py = cy + Math.sin(a) * triR;
+          i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.strokeStyle = `rgba(220,160,255,${0.55 * fade})`;
+        ctx.lineWidth   = 1.5;
+        ctx.shadowColor = '#aa44ff';
+        ctx.shadowBlur  = 10 * fade;
+        ctx.stroke();
+      }
+
+      // ── 中心の魔法陣グロー ──
+      if (t < 0.7) {
+        const cFade = (1 - t / 0.7) * fade;
+        const cGrd  = ctx.createRadialGradient(cx, cy, 0, cx, cy, 50);
+        cGrd.addColorStop(0,   `rgba(240,200,255,${0.7 * cFade})`);
+        cGrd.addColorStop(0.4, `rgba(180,80,255,${0.3 * cFade})`);
+        cGrd.addColorStop(1,   `rgba(120,0,200,0)`);
+        ctx.beginPath();
+        ctx.arc(cx, cy, 50, 0, Math.PI * 2);
+        ctx.fillStyle  = cGrd;
+        ctx.shadowBlur = 0;
+        ctx.fill();
+      }
+
+      // ── 星屑パーティクル（ふわふわ漂う小粒）──
+      if (frame % 4 === 0 && t < 0.6) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist  = r * (0.3 + Math.random() * 0.8);
+        spawn(
+          cx + Math.cos(angle) * dist,
+          cy + Math.sin(angle) * dist,
+          { count:1, speed:0.8, size:2, color:['#e0b0ff','#cc88ff','#ffffff'], glow:8, decay:0.03, gravity:-0.01, friction:0.92 }
+        );
+        if (!rafId) rafId = requestAnimationFrame(loop);
+      }
+
+      ctx.restore();
+      frame++;
+      if (frame <= TOTAL) {
+        revealAnim = requestAnimationFrame(draw);
+      } else {
+        revealAnim = null;
+        // 消える時に紫パーティクルを放出
+        spawn(cx, cy, { count:28, speed:4.5, size:3, color:['#b060ff','#cc88ff','#e0b0ff','#ffffff'], glow:14, decay:0.024, gravity:-0.01, friction:0.93 });
+        if (!rafId) rafId = requestAnimationFrame(loop);
+      }
+    }
+
+    revealAnim = requestAnimationFrame(draw);
+  };
+
 })();
 
 /** ボタン押下：明るいクリック音 */
@@ -1578,10 +1697,10 @@ function onGsReceived(gs) {
     if (!isMyTurn && nseq !== _lastCardAnnounceSeq) {
       _lastCardAnnounceSeq = nseq;
       if (lp.isGuardian) {
-        // 守護発動通知
         showGuardianAnnounceAsync(lp.guardianTarget).catch(() => {});
+      } else if (lp.isDuel) {
+        fxDuel?.(lp.duelResult);
       } else {
-        // 通常のカード出し通知
         showCardAnnounceAsync(lp.playerName, lp, lp.customMsg || null).catch(() => {});
       }
     }
@@ -1834,16 +1953,18 @@ async function fx貴族(gs, actor) {
   pickTarget('貴族 - 対決', '対決する相手を指名してください', targets, async tgt => {
     const aR = actor.hand[0]?.rank ?? 0, tR = tgt.hand[0]?.rank ?? 0;
     addLog(gs, `対決: ${actor.name}(${aR}) vs ${tgt.name}(${tR})`, 'act');
-    if      (aR < tR) {
-      fxDuel?.('right'); // tgt側（右）が勝利
-      addLog(gs,`${actor.name} 脱落！`,'elim'); eliminate(gs,actor,true);
-    } else if (tR < aR) {
-      fxDuel?.('left');  // actor側（左）が勝利
-      addLog(gs,`${tgt.name} 脱落！`,'elim');   eliminate(gs,tgt,true);
-    } else {
-      fxDuel?.('draw');  // 相打ち
-      addLog(gs,'相打ち！','elim'); eliminate(gs,actor,true); eliminate(gs,tgt,true);
-    }
+    const duelResult = aR < tR ? 'right' : tR < aR ? 'left' : 'draw';
+    // card-announce フェーズで両者にエフェクトを通知
+    gs.lastPlayedCard = { rank:6, id:-1, playerName:'', customMsg:null, isGuardian:false, isDuel:true, duelResult, notifySeq:(gs.seq||0)+1 };
+    gs.phase = 'card-announce';
+    fxDuel?.(duelResult); // 自分はローカルで即時表示
+    await pushGS(gs);     // 相手のリスナーが isDuel=true を受信してエフェクト発動
+    // 少し待ってからゲーム処理（エフェクトの途中で次フェーズに行かないよう）
+    await new Promise(r => setTimeout(r, 400));
+    gs.phase = 'effect-pending';
+    if      (aR < tR) { addLog(gs,`${actor.name} 脱落！`,'elim'); eliminate(gs,actor,true); }
+    else if (tR < aR) { addLog(gs,`${tgt.name} 脱落！`,'elim');   eliminate(gs,tgt,true); }
+    else              { addLog(gs,'相打ち！','elim'); eliminate(gs,actor,true); eliminate(gs,tgt,true); }
     if (!checkWin(gs)) await endTurn(gs);
   });
 }
@@ -1940,6 +2061,7 @@ async function fx占師(gs, actor) {
   pickTarget('占師 - 透視', '手札を覗く相手を指名してください', targets, async tgt => {
     addLog(gs, `${actor.name} が ${tgt.name} の手札を確認しました。`, 'act');
     sfxReveal(); // 透視の効果音
+    fxReveal?.(); // 透視エフェクト
     showModal('占師 - 透視結果', `${tgt.name} の手札を確認しました。`,
       `<div class="pbox">${cardHTML(tgt.hand[0], true)}</div>
        <div class="pnote">この情報は他のプレイヤーに秘密にしてください</div>
@@ -2914,7 +3036,7 @@ function startChat() {
     if (!container) return;
     let hasNew = false;
     Object.entries(snap.val())
-      .sort(([a],[b]) => a < b ? -1 : 1)
+      .sort(([,a],[,b]) => (a.ts || 0) - (b.ts || 0))
       .forEach(([key, msg]) => {
         if (chatKeys.has(key)) return;
         chatKeys.add(key);
