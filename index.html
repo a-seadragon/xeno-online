@@ -380,7 +380,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.4.2)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.4.4)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -2401,19 +2401,20 @@ function eliminate(gs, p) {
 async function elimRebirth(gs, p) {
   if (!gs.rebirthUsed && gs.rebirthCard) {
     addLog(gs, `${p.name} の英雄が転生！`, 'imp');
-    // card-announce フェーズで両者に転生エフェクトを通知
+    // 先に転生処理を完了させてからFirebaseへ書き込む
+    p.discards.push(...p.hand); p.hand = [];
+    p.hand.push(gs.rebirthCard);
+    gs.rebirthCard = null;
+    gs.rebirthUsed = true;
+    addLog(gs, `${p.name} が転生札「${p.hand[0].rank} ${CD[p.hand[0].rank].name}」で復帰！`, 'imp');
+    // エフェクトフラグを付けて書き込み（転生後の正しい状態でFirebaseに保存）
     gs.lastPlayedCard = { rank:10, id:-1, playerName:'', customMsg:null, isGuardian:false, isDuel:false, isRebirth:true, notifySeq:(gs.seq||0)+1 };
     gs.phase = 'card-announce';
     sfxRebirth();
     fxRebirth?.(); // 自分はローカルで即時表示
-    await pushGS(gs); // 相手のリスナーが isRebirth=true を受信してエフェクト発動
-    await new Promise(r => setTimeout(r, 500)); // エフェクトが始まるまで少し待つ
+    await pushGS(gs); // 転生完了済みの状態 + エフェクトフラグを書き込み
+    await new Promise(r => setTimeout(r, 500));
     gs.phase = 'effect-pending';
-    p.discards.push(...p.hand); p.hand = [];
-    p.hand.push(gs.rebirthCard);
-    gs.rebirthCard  = null;
-    gs.rebirthUsed  = true;
-    addLog(gs, `${p.name} が転生札「${p.hand[0].rank} ${CD[p.hand[0].rank].name}」で復帰！`, 'imp');
   } else {
     addLog(gs, `転生札なし。${p.name} 脱落。`, 'elim');
     eliminate(gs, p);
