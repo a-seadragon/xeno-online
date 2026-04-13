@@ -380,7 +380,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.4.4)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.4.5)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -1358,6 +1358,163 @@ function sfxModal() {
     rebirthAnim = requestAnimationFrame(draw);
   };
 
+
+  // 皇帝エフェクト専用アニメーション
+  let emperorAnim = null;
+
+  window.fxEmperor = function() {
+    const cv  = canvas(); if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const cx  = cv.width  / 2;
+    const cy  = cv.height / 2;
+
+    if (emperorAnim) { cancelAnimationFrame(emperorAnim); emperorAnim = null; }
+
+    let frame = 0;
+    const TOTAL = 80;
+
+    // 王冠型の稲妻を描く
+    function drawCrown(cx, cy, r, alpha) {
+      ctx.save();
+      ctx.strokeStyle = `rgba(255,200,40,${alpha})`;
+      ctx.lineWidth   = 2;
+      ctx.shadowColor = '#ffaa00';
+      ctx.shadowBlur  = 16;
+      ctx.beginPath();
+      // 王冠の輪郭（下辺→左斜め上→中央下→右斜め上→右→下）
+      const w = r * 1.1, h = r * 0.7;
+      ctx.moveTo(cx - w, cy + h * 0.3);
+      ctx.lineTo(cx - w, cy - h * 0.1);
+      ctx.lineTo(cx - w * 0.5, cy - h);
+      ctx.lineTo(cx, cy - h * 0.4);
+      ctx.lineTo(cx + w * 0.5, cy - h);
+      ctx.lineTo(cx + w, cy - h * 0.1);
+      ctx.lineTo(cx + w, cy + h * 0.3);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function draw() {
+      const t    = frame / TOTAL;
+      const fade = t < 0.65 ? 1.0 : 1 - (t - 0.65) / 0.35;
+      ctx.save();
+
+      // ── フェーズ1(0〜0.35): 暗闇から紫の魔力が集まる ──
+      if (t < 0.35) {
+        const prog  = t / 0.35;
+        const eased = prog * prog;
+        // 画面四隅からエネルギーが中央に集まるような光の筋
+        const corners = [
+          [0, 0], [cv.width, 0],
+          [0, cv.height], [cv.width, cv.height],
+        ];
+        corners.forEach(([sx, sy]) => {
+          const grd = ctx.createLinearGradient(sx, sy, cx, cy);
+          grd.addColorStop(0,              'rgba(120,0,180,0)');
+          grd.addColorStop(1 - eased * 0.6, 'rgba(180,60,255,0)');
+          grd.addColorStop(1,              `rgba(220,100,255,${eased * 0.3})`);
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(cx, cy);
+          ctx.strokeStyle = grd;
+          ctx.lineWidth   = 2 + eased * 4;
+          ctx.shadowColor = '#aa00ff';
+          ctx.shadowBlur  = 10 * eased;
+          ctx.stroke();
+        });
+        // 中心の紫コア
+        const coreR = eased * 40;
+        const cGrd  = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR);
+        cGrd.addColorStop(0,   `rgba(255,200,255,${eased * 0.8})`);
+        cGrd.addColorStop(0.5, `rgba(180,0,255,${eased * 0.5})`);
+        cGrd.addColorStop(1,   'rgba(80,0,150,0)');
+        ctx.beginPath();
+        ctx.arc(cx, cy, Math.max(coreR,1), 0, Math.PI * 2);
+        ctx.fillStyle  = cGrd;
+        ctx.shadowBlur = 0;
+        ctx.fill();
+      }
+
+      // ── フェーズ2(0.3〜0.6): 爆発・衝撃波リング ──
+      if (t >= 0.3 && t < 0.65) {
+        const prog  = (t - 0.3) / 0.35;
+        const eased = 1 - Math.pow(1 - prog, 2);
+
+        // 外側衝撃波（金色）
+        const r1 = eased * Math.min(cx, cy) * 0.75;
+        const a1 = prog < 0.5 ? 1 : 1 - (prog - 0.5) / 0.5;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r1, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255,200,40,${a1 * 0.85})`;
+        ctx.lineWidth   = 5;
+        ctx.shadowColor = '#ffcc00';
+        ctx.shadowBlur  = 30;
+        ctx.stroke();
+
+        // 内側衝撃波（白）
+        const r2 = eased * Math.min(cx, cy) * 0.45;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r2, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255,255,200,${a1 * 0.6})`;
+        ctx.lineWidth   = 2.5;
+        ctx.shadowBlur  = 16;
+        ctx.stroke();
+
+        // 中央フラッシュ
+        if (prog < 0.3) {
+          const fAlpha = (1 - prog / 0.3);
+          const fGrd   = ctx.createRadialGradient(cx, cy, 0, cx, cy, 80);
+          fGrd.addColorStop(0,   `rgba(255,240,180,${fAlpha * 0.9})`);
+          fGrd.addColorStop(0.3, `rgba(255,160,0,${fAlpha * 0.6})`);
+          fGrd.addColorStop(1,   'rgba(200,80,0,0)');
+          ctx.beginPath();
+          ctx.arc(cx, cy, 80, 0, Math.PI * 2);
+          ctx.fillStyle  = fGrd;
+          ctx.shadowBlur = 0;
+          ctx.fill();
+        }
+
+        // 爆発時にパーティクル大量放出
+        if (frame === Math.floor(TOTAL * 0.3)) {
+          spawn(cx, cy, { count:60, speed:10, size:5, color:['#ffcc00','#ffaa00','#ffffff','#ff8800','#ffe566','#ffd700'], glow:20, decay:0.016, gravity:0.04, upward:2 });
+          setTimeout(() => spawn(cx, cy, { count:30, speed:5, size:3, color:['#aa00ff','#cc44ff','#ff00aa','#ffffff'], glow:14, decay:0.022, gravity:0.06 }), 80);
+          if (!rafId) rafId = requestAnimationFrame(loop);
+        }
+      }
+
+      // ── フェーズ3(0.5〜1.0): 王冠シルエット ──
+      if (t >= 0.5) {
+        const prog  = (t - 0.5) / 0.5;
+        const alpha = prog < 0.5 ? prog / 0.5 : 1 - (prog - 0.5) / 0.5;
+        drawCrown(cx, cy + 10, 55 + prog * 15, alpha * fade * 0.9);
+
+        // 王冠の宝石点（3点）
+        [[0, -1], [-0.9, 0.2], [0.9, 0.2]].forEach(([rx, ry], i) => {
+          const px  = cx + rx * 60;
+          const py  = cy + ry * 42;
+          const col = ['#ff4444','#44aaff','#44ff88'][i];
+          ctx.beginPath();
+          ctx.arc(px, py, 5, 0, Math.PI * 2);
+          ctx.fillStyle   = `rgba(255,255,255,${alpha * fade * 0.9})`;
+          ctx.shadowColor = col;
+          ctx.shadowBlur  = 14;
+          ctx.fill();
+        });
+      }
+
+      ctx.restore();
+      frame++;
+      if (frame <= TOTAL) {
+        emperorAnim = requestAnimationFrame(draw);
+      } else {
+        emperorAnim = null;
+        if (!rafId) rafId = requestAnimationFrame(loop);
+      }
+    }
+
+    emperorAnim = requestAnimationFrame(draw);
+  };
+
 })();
 
 /** ボタン押下：明るいクリック音 */
@@ -1832,14 +1989,19 @@ function onGsReceived(gs) {
     const lp   = gs.lastPlayedCard;
     const nseq = lp.notifySeq || 0;
     renderGame(gs);
-    if (!isMyTurn && nseq !== _lastCardAnnounceSeq) {
+    // 転生・対決・守護は手番に関係なく全員に表示（自分が起こした側も含む）
+    // 通常カード通知のみ「自分が出した側はローカルで表示済み」のためスキップ
+    const isSpecial = lp.isGuardian || lp.isDuel || lp.isRebirth;
+    if ((isSpecial || !isMyTurn) && nseq !== _lastCardAnnounceSeq) {
       _lastCardAnnounceSeq = nseq;
       if (lp.isGuardian) {
         showGuardianAnnounceAsync(lp.guardianTarget).catch(() => {});
       } else if (lp.isDuel) {
-        fxDuel?.(lp.duelResult);
+        // 対決は自分がローカルで既に表示済みなのでスキップ
+        if (!isMyTurn) fxDuel?.(lp.duelResult);
       } else if (lp.isRebirth) {
-        sfxRebirth(); fxRebirth?.();
+        // 転生は自分がローカルで既に表示済みなのでスキップ
+        if (!isMyTurn) { sfxRebirth(); fxRebirth?.(); }
       } else {
         showCardAnnounceAsync(lp.playerName, lp, lp.customMsg || null).catch(() => {});
       }
@@ -2038,7 +2200,7 @@ async function fx皇帝(gs, actor) {
     await drawAndRevealThenPick(gs, actor, tgt, '公開処刑', `皇帝 - ${tgt.name} の手札`, async ci => {
       const disc = tgt.hand.splice(ci, 1)[0];
       tgt.discards.push(disc);
-      sfxDiscard(); // 捨て札の効果音
+      sfxEliminate(); // 皇帝専用の重い効果音
       addLog(gs, `${actor.name} が ${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」を捨てさせました。`, 'act');
       const msg = `皇帝の効果：${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」が捨てられました`;
       gs.lastPlayedCard = { rank:disc.rank, id:disc.id, playerName:'', customMsg:msg, isGuardian:false, notifySeq:(gs.seq||0)+1 };
@@ -2817,8 +2979,11 @@ function showCardAnnounceAsync(playerName, card, msg = null) {
     cCard.innerHTML = `<div class="hc c${card.rank}" style="width:100px;height:144px;border-radius:10px;border:1px solid;cursor:default">${cardInner(card)}</div>`;
     el.classList.remove('hide');
     el.classList.add('show');
-    // 捨て札系メッセージ（皇帝・死神・少年）にエフェクト
-    if (msg && (msg.includes('捨てられました') || msg.includes('的中'))) fxDiscard?.();
+    // メッセージ内容でエフェクトを切り替え
+    if (msg) {
+      if (msg.includes('皇帝の効果')) fxEmperor?.();
+      else if (msg.includes('捨てられました') || msg.includes('的中')) fxDiscard?.();
+    }
     setTimeout(() => {
       el.classList.add('hide');
       setTimeout(() => { el.classList.remove('show', 'hide'); resolve(); }, 400);
