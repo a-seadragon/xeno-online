@@ -380,7 +380,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.4.5)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.4.6)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -729,6 +729,32 @@ function sfxModal() {
   sfx([
     { freq:700, dur:0.08, type:'sine', vol:0.10 },
     { freq:900, dur:0.10, type:'sine', vol:0.08, start:0.06 },
+  ]);
+}
+
+/** 精霊の交換：シュッと入れ替わるような音 */
+function sfxSwap() {
+  sfx([
+    { freq:1200, dur:0.05, type:'sine',     vol:0.09 },
+    { freq:900,  dur:0.07, type:'triangle', vol:0.11, start:0.03 },
+    { freq:600,  dur:0.06, type:'sine',     vol:0.09, start:0.07 },
+    { freq:900,  dur:0.07, type:'triangle', vol:0.11, start:0.11 },
+    { freq:1200, dur:0.05, type:'sine',     vol:0.09, start:0.15 },
+  ]);
+}
+
+/** 賢者の3枚ドロー：カードを連続で引く音 */
+function sfxSageDraw() {
+  sfx([
+    { freq:600,  dur:0.06, type:'square',   vol:0.07 },
+    { freq:800,  dur:0.08, type:'triangle', vol:0.10, start:0.05 },
+    { freq:1000, dur:0.06, type:'sine',     vol:0.09, start:0.10 },
+    { freq:650,  dur:0.06, type:'square',   vol:0.07, start:0.18 },
+    { freq:850,  dur:0.08, type:'triangle', vol:0.10, start:0.23 },
+    { freq:1050, dur:0.06, type:'sine',     vol:0.09, start:0.28 },
+    { freq:700,  dur:0.06, type:'square',   vol:0.07, start:0.36 },
+    { freq:900,  dur:0.08, type:'triangle', vol:0.10, start:0.41 },
+    { freq:1100, dur:0.08, type:'sine',     vol:0.11, start:0.46 },
   ]);
 }
 
@@ -2060,6 +2086,7 @@ async function execDraw(gs) {
     if (!avail) { await endGame(gs, 'deck'); return; }
     const drawn = gs.deck.splice(0, avail);
     addLog(gs, `${p.name} は賢者の効果で${avail}枚引きます。`, 'act');
+    if (p.uid === myUid) sfxSageDraw();
     gs.phase = 'choose';
     await pushGS(gs);
     renderGame(gs);
@@ -2227,6 +2254,7 @@ async function fx精霊(gs, actor) {
   await pushGS(gs); renderGame(gs);
   pickTarget('精霊 - 交換', '交換する相手を指名してください', targets, async tgt => {
     [actor.hand[0], tgt.hand[0]] = [tgt.hand[0], actor.hand[0]];
+    sfxSwap();
     addLog(gs, `${actor.name} と ${tgt.name} の手札が交換されました。`, 'act');
     await endTurn(gs);
   });
