@@ -197,6 +197,29 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   animation:blink 1.2s ease-in-out infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.15}}
 
+/* カード選択ガイド */
+.hc.sp::after{
+  content:'▲';
+  position:absolute;bottom:-22px;left:50%;transform:translateX(-50%);
+  font-size:11px;color:var(--gold);opacity:0;
+  animation:tap-guide 1.4s ease-in-out infinite;pointer-events:none}
+@keyframes tap-guide{
+  0%,100%{opacity:0;transform:translateX(-50%) translateY(4px)}
+  50%{opacity:.85;transform:translateX(-50%) translateY(0)}}
+.my-area.my-turn{
+  border-top-color:rgba(201,168,76,.6)!important;
+  box-shadow:0 -6px 28px rgba(0,0,0,.6),0 -2px 12px rgba(201,168,76,.12)!important;
+  animation:my-turn-pulse 2s ease-in-out infinite}
+@keyframes my-turn-pulse{
+  0%,100%{border-top-color:rgba(201,168,76,.4)!important}
+  50%{border-top-color:rgba(201,168,76,.9)!important}}
+.guide-hint{
+  text-align:center;font-family:'Cinzel',serif;font-size:10px;
+  color:var(--gold);letter-spacing:2px;opacity:0;
+  animation:hint-fade 1.6s ease-in-out infinite;
+  margin-top:6px;pointer-events:none}
+@keyframes hint-fade{0%,100%{opacity:0}60%{opacity:.7}}
+
 /* Cards */
 .hc{width:var(--cw);height:var(--ch);border-radius:8px;border:1px solid var(--border);
   display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;
@@ -380,7 +403,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.4.6)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.4.7)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -2742,6 +2765,10 @@ function renderGame(gs) {
     if (myMe.sageMode)   myBadges += `<span class="badge bs">賢者</span>`;
     q('my-badges').innerHTML = myBadges;
 
+    // 自分のターン中はmy-areaをハイライト
+    const myAreaEl = q('my-hand')?.closest('.my-area');
+    if (myAreaEl) myAreaEl.classList.toggle('my-turn', myTurn && gs.phase === 'choose');
+
     // 手札カードを描画（自分のターンかつ choose フェーズなら選択可能にする）
     const myHand  = q('my-hand');
     myHand.innerHTML = '';
@@ -2766,6 +2793,21 @@ function renderGame(gs) {
     });
     if (!myMe.hand.length && myMe.eliminated) {
       myHand.innerHTML = `<div style="color:var(--dim);font-family:'Cinzel',serif;font-size:11px;letter-spacing:2px">脱落</div>`;
+    }
+
+    // ガイドヒント表示（カード選択を促すテキスト）
+    let hintEl = q('my-hand-hint');
+    if (!hintEl) {
+      hintEl = document.createElement('div');
+      hintEl.id = 'my-hand-hint';
+      hintEl.className = 'guide-hint';
+      myHand.parentNode.insertBefore(hintEl, myHand.nextSibling);
+    }
+    if (canPlay && pickedIdx === null) {
+      hintEl.textContent = '▲  タップしてカードを選択  ▲';
+      hintEl.style.display = 'block';
+    } else {
+      hintEl.style.display = 'none';
     }
 
     // 自分の捨て札を描画
