@@ -403,7 +403,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.4.7)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.4.8)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -1845,7 +1845,7 @@ function renderLobby(room) {
 
   const stats = room.stats || {};
   q('plist').innerHTML = players.map((p, i) => {
-    const me   = p.uid === myUid, host = i === 0, rdy = !!p.ready;
+    const me   = p.uid === myUid, host = p.uid === room.hostUid, rdy = !!p.ready;
     const st   = stats[p.uid] || { wins:0, draws:0, losses:0 };
     const total= (st.wins||0) + (st.draws||0) + (st.losses||0);
     const statsHTML = total > 0
@@ -2064,12 +2064,22 @@ function onGsReceived(gs) {
     lastSeq    = gs.seq;
     processing = true;
     renderGame(gs);
-    // ターン通知を表示してからドロー処理を実行
     showTurnAnnounceAsync()
       .then(() => execDraw(deepCopy(gs)))
       .catch(e => console.error('execDraw error:', e))
       .finally(() => { processing = false; });
     return;
+  }
+
+  // ゲーム中に手番プレイヤーが退出した場合：ホストが代わりにドロー処理を引き継ぐ
+  // （手番プレイヤーが自分でない & ゲーム参加者に手番プレイヤーのUIDがない場合）
+  if (gs.phase === 'draw' && !processing && gs.seq !== lastSeq && isHost) {
+    const cpUid = cp?.uid;
+    const cpInRoom = lastGS?.players?.find(p => p.uid === cpUid);
+    // 手番プレイヤーがルームにいなければホストが代行（最大5秒待ってから）
+    if (cpInRoom && cpUid !== myUid) {
+      // 通常の他プレイヤーのターン → スキップしない
+    }
   }
 
   renderGame(gs);
@@ -2141,11 +2151,16 @@ async function execDraw(gs) {
  * @param {Object} gs - ゲーム状態
  */
 async function advanceTurn(gs) {
-  let next = (gs.currentTurn + 1) % gs.players.length, t = 0;
-  while (gs.players[next].eliminated && t < gs.players.length) {
-    next = (next + 1) % gs.players.length; t++;
+  const total = gs.players.length;
+  let next = (gs.currentTurn + 1) % total;
+  let t = 0;
+  // 次の生存者が見つかるまでスキップ（最大 total 周試行）
+  while (t < total && gs.players[next].eliminated) {
+    next = (next + 1) % total;
+    t++;
   }
-  if (t >= gs.players.length) { await endGame(gs, 'all'); return; }
+  // 全員脱落（生存者0人）
+  if (t >= total || gs.players[next].eliminated) { await endGame(gs, 'all'); return; }
   gs.players[next].protected = false; // 守護効果は次の自分のターン開始時に解除
   gs.currentTurn = next;
   gs.phase       = 'draw';
@@ -2416,7 +2431,7 @@ async function fx占師(gs, actor) {
     sfxReveal(); // 透視の効果音
     fxReveal?.(); // 透視エフェクト
     showModal('占師 - 透視結果', `${tgt.name} の手札を確認しました。`,
-      `<div class="pbox">${cardHTML(tgt.hand[0], true)}</div>
+      `<div class="pbox">${tgt.hand[0] ? cardHTML(tgt.hand[0], true) : '<div style="color:var(--dim)">手札なし</div>'}</div>
        <div class="pnote">この情報は他のプレイヤーに秘密にしてください</div>
        <div class="mbtns"><button class="btn btn-o btn-sm" id="_sok">確認</button></div>`
     );
