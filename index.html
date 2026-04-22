@@ -403,7 +403,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.4.8)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.4.9)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -729,12 +729,15 @@ function sfxLose() {
   ]);
 }
 
-/** 兵士的中：パシっと鋭い音 */
+/** 兵士的中：ズドンという重い的中音＋勝利感 */
 function sfxHit() {
   sfx([
-    { freq:800, dur:0.06, type:'square', vol:0.16 },
-    { freq:600, dur:0.10, type:'square', vol:0.12, start:0.04 },
-    { freq:400, dur:0.15, type:'triangle', vol:0.10, start:0.08 },
+    { freq:150, dur:0.10, type:'square',   vol:0.20 },
+    { freq:300, dur:0.08, type:'square',   vol:0.16, start:0.06 },
+    { freq:600, dur:0.10, type:'triangle', vol:0.14, start:0.12 },
+    { freq:900, dur:0.12, type:'sine',     vol:0.14, start:0.20 },
+    { freq:1200,dur:0.18, type:'sine',     vol:0.16, start:0.30 },
+    { freq:1500,dur:0.22, type:'sine',     vol:0.14, start:0.42 },
   ]);
 }
 
@@ -858,27 +861,263 @@ function sfxSageDraw() {
   window.fxDiscard = function() {
     const {x, y} = center();
     spawn(x, y, {
-      count:   40,
-      speed:   5.5,
-      size:    5,
-      color:   ['#e74c3c','#c0392b','#ff6b6b','#ff9999','#8b0000'],
-      glow:    12,
-      decay:   0.018,
-      gravity: 0.08,
-      upward:  1.5,
+      count:40, speed:5.5, size:5,
+      color:['#e74c3c','#c0392b','#ff6b6b','#ff9999','#8b0000'],
+      glow:12, decay:0.018, gravity:0.08, upward:1.5,
     });
-    // 中心から少し遅れて暗い粒子
     setTimeout(() => {
-      spawn(x, y, {
-        count:   20,
-        speed:   3,
-        size:    3,
-        color:   ['#4a0000','#800000','#ff4444'],
-        glow:    8,
-        decay:   0.025,
-        gravity: 0.05,
-      });
+      spawn(x, y, { count:20, speed:3, size:3, color:['#4a0000','#800000','#ff4444'], glow:8, decay:0.025, gravity:0.05 });
     }, 80);
+  };
+
+  // 死神エフェクト専用アニメーション
+  let reaperAnim = null;
+
+  window.fxReaper = function() {
+    const cv  = canvas(); if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const cx  = cv.width / 2, cy = cv.height / 2;
+    if (reaperAnim) { cancelAnimationFrame(reaperAnim); reaperAnim = null; }
+
+    let frame = 0;
+    const TOTAL = 75;
+
+    // 降り注ぐ闇の雨粒
+    const drops = Array.from({length: 28}, () => ({
+      x:  cx + (Math.random() - 0.5) * cv.width * 0.8,
+      y: -30 - Math.random() * cv.height * 0.4,
+      vy: 6 + Math.random() * 8,
+      len: 12 + Math.random() * 20,
+      alpha: 0.4 + Math.random() * 0.5,
+      width: 1 + Math.random() * 1.5,
+    }));
+
+    function draw() {
+      const t    = frame / TOTAL;
+      const fade = t < 0.65 ? 1.0 : 1 - (t - 0.65) / 0.35;
+      ctx.save();
+
+      // ── 暗いベール（画面全体を薄暗く）──
+      if (t < 0.5) {
+        const veil = Math.sin(t / 0.5 * Math.PI) * 0.18;
+        ctx.fillStyle = `rgba(0,0,0,${veil})`;
+        ctx.fillRect(0, 0, cv.width, cv.height);
+      }
+
+      // ── 闇の雨 ──
+      drops.forEach(d => {
+        d.y += d.vy;
+        if (d.y > cv.height + 40) { d.y = -30; d.x = cx + (Math.random() - 0.5) * cv.width * 0.8; }
+        const alpha = d.alpha * fade;
+        ctx.beginPath();
+        ctx.moveTo(d.x, d.y);
+        ctx.lineTo(d.x - d.len * 0.15, d.y + d.len);
+        ctx.strokeStyle = `rgba(80,0,120,${alpha})`;
+        ctx.lineWidth   = d.width;
+        ctx.shadowColor = '#330033';
+        ctx.shadowBlur  = 4;
+        ctx.stroke();
+      });
+
+      // ── 中心から広がる闇のリング ──
+      if (t > 0.05 && t < 0.6) {
+        const prog  = (t - 0.05) / 0.55;
+        const r     = prog * Math.min(cx, cy) * 0.7;
+        const alpha = (1 - prog) * 0.7 * fade;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(100,0,150,${alpha})`;
+        ctx.lineWidth   = 4;
+        ctx.shadowColor = '#660066';
+        ctx.shadowBlur  = 18;
+        ctx.stroke();
+        // 内側
+        ctx.beginPath();
+        ctx.arc(cx, cy, r * 0.55, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(40,0,60,${alpha * 0.6})`;
+        ctx.lineWidth   = 2;
+        ctx.shadowBlur  = 8;
+        ctx.stroke();
+      }
+
+      // ── 中心の紫黒コア ──
+      if (t < 0.45) {
+        const prog  = t / 0.45;
+        const cFade = Math.sin(prog * Math.PI);
+        const r     = 35 + prog * 20;
+        const grd   = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+        grd.addColorStop(0,   `rgba(80,0,80,${cFade * 0.85})`);
+        grd.addColorStop(0.5, `rgba(30,0,50,${cFade * 0.5})`);
+        grd.addColorStop(1,   'rgba(0,0,0,0)');
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fillStyle  = grd;
+        ctx.shadowBlur = 0;
+        ctx.fill();
+      }
+
+      // ── 闇のパーティクル（上昇しない・沈んでいく）──
+      if (frame % 4 === 0 && t < 0.55) {
+        spawn(
+          cx + (Math.random() - 0.5) * 80,
+          cy + (Math.random() - 0.5) * 60,
+          { count:1, speed:1.5, size:3, color:['#330033','#4b0082','#1a001a','#220022'], glow:8, decay:0.028, gravity:0.12, friction:0.94 }
+        );
+        if (!rafId) rafId = requestAnimationFrame(loop);
+      }
+
+      // ── 鎌のような弧（フェーズ後半）──
+      if (t > 0.4 && t < 0.85) {
+        const prog  = (t - 0.4) / 0.45;
+        const alpha = Math.sin(prog * Math.PI) * 0.7 * fade;
+        const r     = 55 + prog * 25;
+        ctx.beginPath();
+        ctx.arc(cx + 10, cy - 5, r, Math.PI * 0.9, Math.PI * 1.9);
+        ctx.strokeStyle = `rgba(160,0,200,${alpha})`;
+        ctx.lineWidth   = 3.5;
+        ctx.shadowColor = '#aa00cc';
+        ctx.shadowBlur  = 16;
+        ctx.lineCap     = 'round';
+        ctx.stroke();
+        // 刃先
+        ctx.beginPath();
+        ctx.arc(cx + 10, cy - 5, r * 1.18, Math.PI * 1.55, Math.PI * 1.85);
+        ctx.strokeStyle = `rgba(200,100,255,${alpha * 0.8})`;
+        ctx.lineWidth   = 2;
+        ctx.shadowBlur  = 10;
+        ctx.stroke();
+      }
+
+      ctx.restore();
+      frame++;
+      if (frame <= TOTAL) {
+        reaperAnim = requestAnimationFrame(draw);
+      } else {
+        reaperAnim = null;
+        // 消滅時に暗いパーティクルを放出
+        spawn(cx, cy, { count:25, speed:4, size:3, color:['#4b0082','#330033','#220044','#6600aa'], glow:10, decay:0.02, gravity:0.10, friction:0.93 });
+        if (!rafId) rafId = requestAnimationFrame(loop);
+      }
+    }
+    reaperAnim = requestAnimationFrame(draw);
+  };
+
+  // 兵士適中エフェクト専用アニメーション
+  let soldierAnim = null;
+
+  window.fxSoldierHit = function() {
+    const cv  = canvas(); if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const cx  = cv.width / 2, cy = cv.height / 2;
+    if (soldierAnim) { cancelAnimationFrame(soldierAnim); soldierAnim = null; }
+
+    let frame = 0;
+    const TOTAL = 70;
+
+    function draw() {
+      const t    = frame / TOTAL;
+      const fade = t < 0.6 ? 1.0 : 1 - (t - 0.6) / 0.4;
+      ctx.save();
+
+      // ── フェーズ1: 照準（十字線）が収束 ──
+      if (t < 0.35) {
+        const prog  = t / 0.35;
+        const eased = 1 - Math.pow(1 - prog, 2);
+        const size  = (1 - eased) * 120 + 20; // 外から収束
+        const alpha = eased * 0.8;
+        const col   = `rgba(255,80,80,${alpha})`;
+        // 横線
+        ctx.beginPath();
+        ctx.moveTo(cx - size, cy);
+        ctx.lineTo(cx + size, cy);
+        ctx.strokeStyle = col;
+        ctx.lineWidth   = 1.5;
+        ctx.shadowColor = '#ff0000';
+        ctx.shadowBlur  = 10;
+        ctx.stroke();
+        // 縦線
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - size);
+        ctx.lineTo(cx, cy + size);
+        ctx.stroke();
+        // 円
+        ctx.beginPath();
+        ctx.arc(cx, cy, size * 0.5, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255,80,80,${alpha * 0.6})`;
+        ctx.lineWidth   = 1;
+        ctx.shadowBlur  = 6;
+        ctx.stroke();
+      }
+
+      // ── フェーズ2: 命中フラッシュ ──
+      if (t >= 0.33 && t < 0.55) {
+        const prog  = (t - 0.33) / 0.22;
+        const alpha = (1 - prog) * fade;
+        // 放射状の光線（8方向）
+        for (let i = 0; i < 8; i++) {
+          const angle = (Math.PI * 2 / 8) * i;
+          const len   = (60 + prog * 80) * (1 - prog * 0.5);
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(angle) * 8, cy + Math.sin(angle) * 8);
+          ctx.lineTo(cx + Math.cos(angle) * len, cy + Math.sin(angle) * len);
+          ctx.strokeStyle = `rgba(255,${100 + prog * 155},50,${alpha * 0.85})`;
+          ctx.lineWidth   = 3 - prog * 2;
+          ctx.shadowColor = '#ff6600';
+          ctx.shadowBlur  = 14;
+          ctx.lineCap     = 'round';
+          ctx.stroke();
+        }
+        // 中心フラッシュ
+        const fGrd = ctx.createRadialGradient(cx, cy, 0, cx, cy, 55 * (1 - prog));
+        fGrd.addColorStop(0,   `rgba(255,255,200,${alpha * 0.9})`);
+        fGrd.addColorStop(0.4, `rgba(255,150,0,${alpha * 0.6})`);
+        fGrd.addColorStop(1,   'rgba(255,80,0,0)');
+        ctx.beginPath();
+        ctx.arc(cx, cy, 55 * (1 - prog * 0.3), 0, Math.PI * 2);
+        ctx.fillStyle  = fGrd;
+        ctx.shadowBlur = 0;
+        ctx.fill();
+
+        if (frame === Math.floor(TOTAL * 0.34)) {
+          // 命中時にパーティクル大量放出
+          spawn(cx, cy, { count:50, speed:9, size:5, color:['#ff6600','#ffaa00','#ff3300','#ffffff','#ffcc00'], glow:18, decay:0.017, gravity:0.05, upward:1.5 });
+          spawn(cx, cy, { count:25, speed:5, size:3, color:['#ff0000','#cc0000','#ff4444'], glow:12, decay:0.024, gravity:0.08 });
+          if (!rafId) rafId = requestAnimationFrame(loop);
+        }
+      }
+
+      // ── フェーズ3: ✓ マーク（命中確認） ──
+      if (t > 0.5) {
+        const prog  = (t - 0.5) / 0.5;
+        const alpha = Math.sin(Math.min(prog * 2, 1) * Math.PI * 0.5) * fade;
+        const scale = 0.7 + prog * 0.5;
+        ctx.save();
+        ctx.translate(cx, cy - 10);
+        ctx.scale(scale, scale);
+        ctx.beginPath();
+        ctx.moveTo(-28, 0);
+        ctx.lineTo(-8, 22);
+        ctx.lineTo(30, -20);
+        ctx.strokeStyle = `rgba(100,255,100,${alpha * 0.9})`;
+        ctx.lineWidth   = 5;
+        ctx.shadowColor = '#00ff44';
+        ctx.shadowBlur  = 20;
+        ctx.lineCap     = 'round';
+        ctx.lineJoin    = 'round';
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      ctx.restore();
+      frame++;
+      if (frame <= TOTAL) {
+        soldierAnim = requestAnimationFrame(draw);
+      } else {
+        soldierAnim = null;
+        if (!rafId) rafId = requestAnimationFrame(loop);
+      }
+    }
+    soldierAnim = requestAnimationFrame(draw);
   };
 
   /** 守護エフェクト（乙女）: 青い光の粒子がリング状に広がる */
@@ -1565,6 +1804,16 @@ function sfxSageDraw() {
   };
 
 })();
+
+/** 死神専用：低く唸る暗い音 */
+function sfxReaper() {
+  sfx([
+    { freq:80,  dur:0.30, type:'triangle', vol:0.18 },
+    { freq:60,  dur:0.35, type:'triangle', vol:0.14, start:0.10 },
+    { freq:100, dur:0.20, type:'square',   vol:0.10, start:0.20 },
+    { freq:50,  dur:0.40, type:'triangle', vol:0.12, start:0.30 },
+  ]);
+}
 
 /** ボタン押下：明るいクリック音 */
 function sfxBtn() {
@@ -2385,7 +2634,7 @@ async function fx死神(gs, actor) {
       closeModal();
       const disc = tgt.hand.splice(idx, 1)[0];
       tgt.discards.push(disc);
-      sfxDiscard(); // 捨て札の効果音
+      sfxReaper(); // 死神専用の効果音
       addLog(gs, `${actor.name} が ${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」を捨てさせました（死神）。`, 'act');
       const msg = `死神の効果：${tgt.name} の「${disc.rank} ${CD[disc.rank].name}」が捨てられました`;
       gs.lastPlayedCard = { rank:disc.rank, id:disc.id, playerName:'', customMsg:msg, isGuardian:false, notifySeq:(gs.seq||0)+1 };
@@ -3066,7 +3315,9 @@ function showCardAnnounceAsync(playerName, card, msg = null) {
     el.classList.add('show');
     // メッセージ内容でエフェクトを切り替え
     if (msg) {
-      if (msg.includes('皇帝の効果')) fxEmperor?.();
+      if      (msg.includes('皇帝の効果'))  fxEmperor?.();
+      else if (msg.includes('死神の効果'))  fxReaper?.();
+      else if (msg.includes('兵士的中'))    fxSoldierHit?.();
       else if (msg.includes('捨てられました') || msg.includes('的中')) fxDiscard?.();
     }
     setTimeout(() => {
