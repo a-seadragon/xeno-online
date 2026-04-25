@@ -197,6 +197,14 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   animation:blink 1.2s ease-in-out infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.15}}
 
+/* カード飛行アニメーション */
+.flying-card{
+  position:fixed;z-index:1800;pointer-events:none;
+  width:88px;height:126px;border-radius:8px;border:1px solid;
+  display:flex;align-items:center;justify-content:center;
+  will-change:transform,opacity;
+  box-shadow:0 8px 32px rgba(0,0,0,.7),0 0 24px rgba(201,168,76,.3)}
+
 /* カード選択ガイド */
 .hc.sp::after{
   content:'▲';
@@ -403,7 +411,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   <div class="logo-wrap">
     <div class="logo-eye">Card Game</div>
     <div class="logo-main">XENO</div>
-    <div class="logo-sub">ゼノ-非公式版 β(ver0.4.9)</div>
+    <div class="logo-sub">ゼノ-非公式版 β(ver0.5.0)</div>
     <div class="ob">Online Multiplayer</div>
   </div>
   <div id="conn-status" class="cbadge cerr">接続中...</div>
@@ -2462,7 +2470,8 @@ async function playCard(handIndex) {
   };
   gs.phase = 'card-announce';
 
-  // 手番プレイヤーはローカルで先に通知を表示（並行して Firebase に書き込み）
+  // 手番プレイヤー：カードが飛んでから通知を表示
+  await flyCardToCenter(handIndex, card);  // カードが中央へ飛ぶ（0.35s + 0.4s）
   const announceP = showCardAnnounceAsync(actor.name, card, null);
   await pushGS(gs);  // 相手のリスナーが card-announce フェーズを受信して通知を表示
   await announceP;   // 自分の通知アニメーションが終わるまで待つ
@@ -3280,6 +3289,69 @@ function cardHTML(c, large = false) {
  *       execDraw() が await して待機することでドロー前に必ず表示される。
  * @returns {Promise<void>} 通知アニメーション完了まで待機
  */
+/**
+ * 選択カードが手札位置から画面中央へ飛んでいくアニメーション
+ * @param {number} handIndex - 出すカードの手札インデックス
+ * @param {Object} card      - カードオブジェクト {rank, id}
+ * @returns {Promise<void>}  アニメーション完了まで待機
+ */
+function flyCardToCenter(handIndex, card) {
+  return new Promise(resolve => {
+    // 出すカード要素の位置を取得
+    const myHand = q('my-hand');
+    if (!myHand) { resolve(); return; }
+    const cardEls = myHand.querySelectorAll('.hc');
+    const srcEl   = cardEls[handIndex];
+    if (!srcEl) { resolve(); return; }
+
+    const srcRect = srcEl.getBoundingClientRect();
+    const destX   = window.innerWidth  / 2 - 44;  // 中央（カード幅の半分を引く）
+    const destY   = window.innerHeight / 2 - 63;  // 中央（カード高さの半分を引く）
+
+    // フライングカード要素を生成
+    const el = document.createElement('div');
+    el.className = `flying-card c${card.rank}`;
+    el.innerHTML = `<div class="ci">
+      <div class="cr">${card.rank}</div>
+      <div class="cn">${CD[card.rank]?.name ?? ''}</div>
+      <div class="ce">${CD[card.rank]?.eff ?? ''}</div>
+    </div>`;
+
+    // 出発位置をセット
+    el.style.cssText = `
+      left:${srcRect.left}px;
+      top:${srcRect.top}px;
+      transform:scale(1) rotate(0deg);
+      opacity:1;
+      transition:none;
+    `;
+    document.body.appendChild(el);
+
+    // 元のカードを一時的に非表示
+    srcEl.style.opacity = '0';
+
+    // 1フレーム後にアニメーション開始（CSSトランジションが効くよう）
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      el.style.transition = 'left .35s cubic-bezier(.4,0,.2,1), top .35s cubic-bezier(.4,0,.2,1), transform .35s cubic-bezier(.34,1.56,.64,1), opacity .1s .3s';
+      el.style.left      = `${destX}px`;
+      el.style.top       = `${destY}px`;
+      el.style.transform = 'scale(1.15) rotate(-4deg)';
+
+      // 到着後：少し停止してからフェードアウト
+      setTimeout(() => {
+        el.style.transition = 'transform .18s ease-in, opacity .22s ease-in';
+        el.style.transform  = 'scale(0.85) rotate(-4deg)';
+        el.style.opacity    = '0';
+        setTimeout(() => {
+          el.remove();
+          srcEl.style.opacity = '';  // 元に戻す
+          resolve();
+        }, 220);
+      }, 200);
+    }));
+  });
+}
+
 function showTurnAnnounceAsync() {
   return new Promise(resolve => {
     const el = q('turn-announce');
